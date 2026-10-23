@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autoscaling-controller
+  namespace: autoscaling-demo
+  labels:
+    app: autoscaling-controller
+    project: "357"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: autoscaling-controller
+  template:
+    metadata:
+      labels:
+        app: autoscaling-controller
+    spec:
+      serviceAccountName: autoscaling-controller-sa
+      containers:
+        - name: controller
+          image: autoscaling-framework:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "controller.main"]
+          env:
+            - name: TARGET_NAMESPACE
+              value: "autoscaling-demo"
+            - name: TARGET_DEPLOYMENT
+              value: "sample-web-app"
+            - name: PROMETHEUS_URL
+              value: "http://prometheus-server.monitoring.svc.cluster.local:9090"
+            - name: DRY_RUN
+              value: "true"
+            - name: ENABLE_LIVE_EXECUTION
+              value: "false"
+            - name: EVALUATION_INTERVAL_SECONDS
+              value: "10"
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+          volumeMounts:
+            - name: policies-vol
+              mountPath: /app/policies
+      volumes:
+        - name: policies-vol
+          configMap:
+            name: scaling-policies-cm

@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="section-block">
+  <div class="eyebrow">Integration Status & Diagnostics</div>
+  <h2>System Health</h2>
+  <p class="panel-subtitle">Application availability is explicitly distinguished from live Prometheus telemetry and Kubernetes cluster connectivity.</p>
+</section>
+
+<div class="content-grid">
+  <!-- Application & Controller Service -->
+  <section class="panel span-5 health-card">
+    <div class="panel-header">
+      <div>
+        <div class="eyebrow">Application Service</div>
+        <h2>Dashboard & Control Plane</h2>
+      </div>
+      <span class="badge badge-accent">Available</span>
+    </div>
+    <div class="health-copy">
+      The Python Flask dashboard is operating and evaluating state deterministically. Policy engine and PRAH arbitration are loaded.
+    </div>
+    <div class="health-row">
+      <span class="status-dot success"></span>
+      <strong>Policy Rules Loaded</strong>
+      <span id="health-policy-count">6 active rules</span>
+    </div>
+    <div class="health-row">
+      <span class="status-dot success"></span>
+      <strong>Decision Mode</strong>
+      <span id="health-mode-detail">Checking…</span>
+    </div>
+    <div class="panel-footer">
+      <a class="text-link" href="{{ url_for('healthz') }}">Liveness (/healthz) &rarr;</a>
+      <a class="text-link" href="{{ url_for('readyz') }}">Readiness (/readyz) &rarr;</a>
+    </div>
+  </section>
+
+  <!-- Live Integrations Diagnostics -->
+  <section class="panel span-7 health-card">
+    <div class="panel-header">
+      <div>
+        <div class="eyebrow">External Dependencies</div>
+        <h2>Integration Diagnostics</h2>
+      </div>
+    </div>
+    <div class="health-row">
+      <span class="status-dot" id="dot-prom"></span>
+      <strong>Prometheus Server</strong>
+      <span id="health-prom-detail">Checking…</span>
+    </div>
+    <div class="health-row">
+      <span class="status-dot" id="dot-targets"></span>
+      <strong>Scrape Targets</strong>
+      <span id="health-targets-detail">Checking scrape targets…</span>
+    </div>
+    <div class="health-row">
+      <span class="status-dot" id="dot-k8s"></span>
+      <strong>Kubernetes API</strong>
+      <span id="health-k8s-detail">Checking…</span>
+    </div>
+    <div class="panel-footer">
+      <span class="muted" id="health-last-check">Checking connectivity...</span>
+      <button class="btn btn-sm btn-secondary" onclick="triggerManualRefresh()">Run Diagnostics Now</button>
+    </div>
+  </section>
+</div>
+{% endblock %}

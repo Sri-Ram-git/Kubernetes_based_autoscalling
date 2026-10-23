@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="section-block">
+  <div class="section-heading">
+    <div>
+      <div class="eyebrow">Prometheus Live Integration</div>
+      <h2>Telemetry Processing & Metrics</h2>
+      <p class="panel-subtitle">Instant vector measurements with deterministic validation, staleness detection, and quality statuses.</p>
+    </div>
+    <div style="display:flex; gap:12px; align-items:center;">
+      <button class="btn btn-sm btn-secondary" id="btn-refresh-telemetry" onclick="refreshTelemetryManual()" title="Query Prometheus Now">
+        ↻ Query Prometheus
+      </button>
+      <span id="telemetry-source-badge" class="badge">PROMETHEUS</span>
+    </div>
+  </div>
+</section>
+
+<!-- Warning Notice -->
+<div id="telemetry-warning" class="notice notice-warning hidden">
+  <strong>Telemetry Alert:</strong> <span id="telemetry-warning-text"></span>
+</div>
+
+<!-- Metric Processing Cards -->
+<section class="panel">
+  <div class="panel-header">
+    <div>
+      <div class="eyebrow">Validated Signals</div>
+      <h2>Workload Telemetry Vector</h2>
+    </div>
+    <span class="source-tag" id="telemetry-endpoint-tag">http://localhost:9090</span>
+  </div>
+
+  <div class="telemetry-list">
+    <!-- CPU Utilization -->
+    <div class="telemetry-item">
+      <div>
+        <strong>CPU Utilization</strong>
+        <span id="status-cpu" class="metric-status-tag">UNKNOWN</span>
+      </div>
+      <div class="telemetry-value">
+        <span id="val-cpu">Unavailable</span>
+        <small id="unit-cpu">%</small>
+      </div>
+      <div class="meter-bar-track">
+        <div id="fill-cpu" class="meter-bar-fill" style="width:0%"></div>
+      </div>
+      <div class="metric-meta-row">
+        <span class="muted" id="freshness-cpu">Freshness: --</span>
+        <span class="metric-query-tag" title="PromQL Query">PromQL: cpu_utilization_percent</span>
+      </div>
+    </div>
+
+    <!-- Memory Utilization -->
+    <div class="telemetry-item">
+      <div>
+        <strong>Memory Utilization</strong>
+        <span id="status-mem" class="metric-status-tag">UNKNOWN</span>
+      </div>
+      <div class="telemetry-value">
+        <span id="val-mem">Unavailable</span>
+        <small id="unit-mem">%</small>
+      </div>
+      <div class="meter-bar-track">
+        <div id="fill-mem" class="meter-bar-fill" style="width:0%"></div>
+      </div>
+      <div class="metric-meta-row">
+        <span class="muted" id="freshness-mem">Freshness: --</span>
+        <span class="metric-query-tag" title="PromQL Query">PromQL: memory_utilization_percent</span>
+      </div>
+    </div>
+
+    <!-- HTTP Request Rate -->
+    <div class="telemetry-item">
+      <div>
+        <strong>HTTP Request Rate</strong>
+        <span id="status-rps" class="metric-status-tag">UNKNOWN</span>
+      </div>
+      <div class="telemetry-value">
+        <span id="val-rps">Unavailable</span>
+        <small id="unit-rps">req/s</small>
+      </div>
+      <div class="meter-bar-track">
+        <div id="fill-rps" class="meter-bar-fill" style="width:0%"></div>
+      </div>
+      <div class="metric-meta-row">
+        <span class="muted" id="freshness-rps">Freshness: --</span>
+        <span class="metric-query-tag" title="PromQL Query">PromQL: http_requests_per_second</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel-footer">
+    <span id="telemetry-freshness-msg">Checking Prometheus query freshness...</span>
+    <span class="muted" id="telemetry-staleness-limit">Staleness Threshold: 60.0s</span>
+  </div>
+</section>
+
+<!-- Prometheus Scrape Targets Inventory -->
+<section class="panel" style="margin-top: 16px;">
+  <div class="panel-header">
+    <div>
+      <div class="eyebrow">Target Health</div>
+      <h2>Prometheus Scrape Targets (/api/v1/targets)</h2>
+    </div>
+    <span class="badge badge-accent" id="targets-count-badge">Checking targets...</span>
+  </div>
+
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Scrape Job</th>
+          <th>Scrape Endpoint</th>
+          <th>Health Status</th>
+          <th>Last Scrape</th>
+          <th>Diagnostics / Error</th>
+        </tr>
+      </thead>
+      <tbody id="targets-table-body">
+        <tr>
+          <td colspan="5" class="empty-state">Loading scrape targets from Prometheus...</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel-footer">
+    <span>Health check: <code>/-/ready</code> and <code>/-/healthy</code></span>
+    <a class="text-link" href="{{ url_for('system_health_page') }}">View System Health &rarr;</a>
+  </div>
+</section>
+{% endblock %}

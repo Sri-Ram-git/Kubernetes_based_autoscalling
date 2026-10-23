@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autoscaling-dashboard
+  namespace: autoscaling-demo
+  labels:
+    app: autoscaling-dashboard
+    project: "357"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: autoscaling-dashboard
+  template:
+    metadata:
+      labels:
+        app: autoscaling-dashboard
+    spec:
+      serviceAccountName: autoscaling-controller-sa
+      containers:
+        - name: dashboard
+          image: autoscaling-framework:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "dashboard.app"]
+          ports:
+            - containerPort: 5000
+              name: http
+          env:
+            - name: TARGET_NAMESPACE
+              value: "autoscaling-demo"
+            - name: TARGET_DEPLOYMENT
+              value: "sample-web-app"
+            - name: PROMETHEUS_URL
+              value: "http://prometheus-server.monitoring.svc.cluster.local:9090"
+            - name: DASHBOARD_HOST
+              value: "0.0.0.0"
+            - name: DASHBOARD_PORT
+              value: "5000"
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "250m"
+              memory: "128Mi"
+          volumeMounts:
+            - name: policies-vol
+              mountPath: /app/policies
+      volumes:
+        - name: policies-vol
+          configMap:
+            name: scaling-policies-cm
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: autoscaling-dashboard
+  namespace: autoscaling-demo
+  labels:
+    app: autoscaling-dashboard
+spec:
+  type: NodePort
+  selector:
+    app: autoscaling-dashboard
+  ports:
+    - name: http
+      port: 5000
+      targetPort: 5000
+      nodePort: 30500

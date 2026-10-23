@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: autoscaling-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus-config.yaml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+
+  sample-app:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    container_name: sample-web-app
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: autoscaling-dashboard
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/app
+    environment:
+      - PROMETHEUS_URL=http://prometheus:9090
+      - TARGET_NAMESPACE=autoscaling-demo
+      - TARGET_DEPLOYMENT=sample-web-app
+      - DRY_RUN=true
+      - DASHBOARD_HOST=0.0.0.0
+      - DASHBOARD_PORT=5000
+    command: ["python", "-m", "dashboard.app"]
+    depends_on:
+      - prometheus
+      - sample-app

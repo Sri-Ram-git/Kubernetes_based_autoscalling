@@ -1,0 +1,97 @@
+version: '1.0'
+target_workload:
+  namespace: autoscaling-demo
+  kind: Deployment
+  name: sample-web-app
+guardrails:
+  min_replicas: 1
+  max_replicas: 10
+  max_scale_step_up: 2
+  max_scale_step_down: 1
+  cooldown_seconds: 60
+  hysteresis_band_percent: 5.0
+  dry_run_default: true
+fallback_behavior:
+  on_missing_metrics: HOLD
+  on_stale_metrics: HOLD
+  staleness_threshold_seconds: 60
+  explanation: Telemetry unavailable or stale; holding current replica count to avoid
+    aggressive actions.
+conflict_resolution:
+  arbitration_method: PRAH
+  tie_breaking: SCALE_OUT_WINS
+  tie_breaking_rationale: When scale-out and scale-in have equal priority, scale-out
+    is favored to preserve application availability and prevent SLA violation.
+policies:
+- id: CPU_CRITICAL_SPIKE
+  name: Critical CPU Spike Scale-Out
+  description: Urgent scale-out when CPU exceeds 90% across the deployment
+  enabled: true
+  priority: 100
+  metric: cpu_utilization_percent
+  operator: '>='
+  threshold: 90.0
+  duration_seconds: 0
+  action: SCALE_OUT
+  replica_delta: 2
+  cooldown_seconds: 45
+- id: CPU_HIGH_LOAD
+  name: High CPU Load Scale-Out
+  description: Standard scale-out when CPU exceeds 75% for sustained duration
+  enabled: true
+  priority: 80
+  metric: cpu_utilization_percent
+  operator: '>'
+  threshold: 75.0
+  duration_seconds: 5
+  action: SCALE_OUT
+  replica_delta: 1
+  cooldown_seconds: 60
+- id: MEM_HIGH_USAGE
+  name: High Memory Utilization Scale-Out
+  description: Scale-out when memory exceeds 80% to prevent OOM kills
+  enabled: true
+  priority: 70
+  metric: memory_utilization_percent
+  operator: '>'
+  threshold: 80.0
+  duration_seconds: 5
+  action: SCALE_OUT
+  replica_delta: 1
+  cooldown_seconds: 60
+- id: RPS_HIGH_TRAFFIC
+  name: High HTTP Request Rate Scale-Out
+  description: Scale-out when HTTP request rate per pod exceeds 150 rps
+  enabled: true
+  priority: 60
+  metric: http_requests_per_second
+  operator: '>'
+  threshold: 150.0
+  duration_seconds: 0
+  action: SCALE_OUT
+  replica_delta: 1
+  cooldown_seconds: 60
+- id: CPU_LOW_LOAD
+  name: Low CPU Load Scale-In
+  description: Scale-in when CPU utilization is below 25% to conserve resources
+  enabled: true
+  priority: 40
+  metric: cpu_utilization_percent
+  operator: <
+  threshold: 25.0
+  duration_seconds: 5
+  action: SCALE_IN
+  replica_delta: -1
+  cooldown_seconds: 60
+- id: MEM_LOW_USAGE
+  name: Low Memory Utilization Scale-In
+  description: Scale-in when memory utilization is below 30%
+  enabled: true
+  priority: 30
+  metric: memory_utilization_percent
+  operator: <
+  threshold: 30.0
+  duration_seconds: 5
+  action: SCALE_IN
+  replica_delta: -1
+  cooldown_seconds: 60

@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: autoscaling-controller-sa
+  namespace: autoscaling-demo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: autoscaling-controller-role
+  namespace: autoscaling-demo
+rules:
+  # Deployment and scale subresource permissions
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  
+  # Pod inspection permissions
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+
+  # HPA collision detection
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: autoscaling-controller-rb
+  namespace: autoscaling-demo
+subjects:
+  - kind: ServiceAccount
+    name: autoscaling-controller-sa
+    namespace: autoscaling-demo
+roleRef:
+  kind: Role
+  name: autoscaling-controller-role
+  apiGroup: rbac.authorization.k8s.io

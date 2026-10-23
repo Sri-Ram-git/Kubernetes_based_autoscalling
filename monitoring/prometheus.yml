@@ -1,0 +1,21 @@
+global:
+  scrape_interval: 2s
+  evaluation_interval: 2s
+  scrape_timeout: 2s
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "sample-web-app"
+    metrics_path: "/metrics"
+    scrape_interval: 2s
+    scrape_timeout: 2s
+    static_configs:
+      - targets: ["localhost:8080"]
+        labels:
+          app: "sample-web-app"
+          namespace: "autoscaling-demo"
+          pod: "sample-web-app-5858cfd795-x9z4p"
+          container: "web"

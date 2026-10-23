@@ -1,0 +1,21 @@
+# Prometheus Community Helm Chart Values for Minikube Demonstration
+# Project ID: 357 | Alliance University, Bengaluru
+
+server:
+  replicaCount: 1
+  retention: "1d"
+  service:
+    type: ClusterIP
+    servicePort: 9090
+
+alertmanager:
+  enabled: false
+
+pushgateway:
+  enabled: false
+
+nodeExporter:
+  enabled: true
+
+kubeStateMetrics:
+  enabled: true

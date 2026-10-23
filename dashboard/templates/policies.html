@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="section-block">
+  <div class="section-heading">
+    <div>
+      <div class="eyebrow">Controller configuration</div>
+      <h2>Scaling policies</h2>
+      <p class="panel-subtitle">Deterministic rules loaded from the active policy configuration. Evaluated per reconciliation cycle.</p>
+    </div>
+    <span id="policy-file-label" class="source-tag">Loading policy file…</span>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <div>
+      <h2>Configured Policy Rules</h2>
+      <p class="panel-subtitle">Rule conditions, thresholds, priority arbitration tiers, and live evaluation status.</p>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table" id="policies-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Policy</th>
+          <th>Priority</th>
+          <th>Metric</th>
+          <th>Condition</th>
+          <th>Action</th>
+          <th>Delta</th>
+          <th>Cooldown</th>
+          <th>Evaluation Status</th>
+        </tr>
+      </thead>
+      <tbody id="policies-table-body">
+        <tr><td colspan="9" class="empty-state">Loading policies…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
