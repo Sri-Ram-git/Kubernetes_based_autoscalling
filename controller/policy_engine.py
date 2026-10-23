@@ -65,7 +65,9 @@ class PolicyRule:
         return op_func(value, self.threshold)
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        d["operator"] = self.operator_str
+        return d
 
 
 @dataclass
@@ -87,7 +89,9 @@ class PolicyEvaluationResult:
     cooldown_seconds: float
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        d["operator"] = self.operator_str
+        return d
 
 
 class PolicyValidationError(Exception):

@@ -10,6 +10,8 @@ import json
 import logging
 import math
 import os
+import copy
+import tempfile
 from pathlib import Path
 import sys
 import time
@@ -25,6 +27,7 @@ import yaml
 
 from controller.config import ControllerConfig
 from controller.main import AutoscalingController
+from controller.policy_engine import PolicyEngine, PolicyValidationError
 from controller.telemetry import MetricStatus
 
 logging.basicConfig(
@@ -48,6 +51,103 @@ app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 # Global controller instance
 controller_config = ControllerConfig.load()
 controller = AutoscalingController(config=controller_config)
+
+
+def _load_policy_document() -> Dict[str, Any]:
+    """Read the active YAML document without exposing credentials or secrets."""
+    with open(controller.config.policies_path, "r", encoding="utf-8") as handle:
+        document = yaml.safe_load(handle) or {}
+    if not isinstance(document, dict) or not isinstance(document.get("policies"), list):
+        raise PolicyValidationError("Policy document must contain a 'policies' list")
+    return document
+
+
+def _persist_policy_document(document: Dict[str, Any]) -> None:
+    """Validate first, then atomically persist and reload the active policy file."""
+    candidate = PolicyEngine()
+    candidate.validate_and_parse(copy.deepcopy(document))
+    policy_path = Path(controller.config.policies_path)
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=policy_path.parent,
+                                     prefix=f".{policy_path.name}.", suffix=".tmp", delete=False) as handle:
+        yaml.safe_dump(document, handle, sort_keys=False)
+        temp_path = Path(handle.name)
+    try:
+        os.replace(temp_path, policy_path)
+        controller.reload_policies()
+        controller.run_single_cycle()
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+
+
+def _policy_input(data: Dict[str, Any], policy_id: str | None = None) -> Dict[str, Any]:
+    """Normalize the public policy payload while keeping the existing YAML schema."""
+    if not isinstance(data, dict):
+        raise PolicyValidationError("Policy payload must be a JSON object")
+    if "enabled" in data and not isinstance(data["enabled"], bool):
+        raise PolicyValidationError("Policy 'enabled' must be a boolean")
+    required = ("name", "metric", "threshold", "action", "replica_delta", "priority")
+    missing = [key for key in required if key not in data]
+    op = data.get("operator") or data.get("operator_str")
+    if not op:
+        missing.append("operator")
+    if missing:
+        raise PolicyValidationError(f"Missing required policy fields: {', '.join(missing)}")
+
+    # Validate numeric threshold and ranges
+    try:
+        threshold_val = float(data["threshold"])
+        if not math.isfinite(threshold_val):
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise PolicyValidationError("Threshold must be a finite numeric value")
+
+    try:
+        priority_val = int(data["priority"])
+        if priority_val <= 0:
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise PolicyValidationError("Priority must be a positive integer (> 0)")
+
+    try:
+        delta_val = int(data["replica_delta"])
+    except (ValueError, TypeError):
+        raise PolicyValidationError("replica_delta must be an integer")
+
+    try:
+        duration_val = float(data.get("duration_seconds", 0))
+        if duration_val < 0 or not math.isfinite(duration_val):
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise PolicyValidationError("duration_seconds must be a non-negative number")
+
+    try:
+        cooldown_val = float(data.get("cooldown_seconds", 60))
+        if cooldown_val < 0 or not math.isfinite(cooldown_val):
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise PolicyValidationError("cooldown_seconds must be a non-negative number")
+
+    result = {
+        "id": policy_id or data.get("id"),
+        "name": str(data["name"]).strip(),
+        "description": str(data.get("description", "")).strip(),
+        "enabled": data.get("enabled", True),
+        "priority": priority_val,
+        "metric": str(data["metric"]).strip(),
+        "operator": str(op).strip(),
+        "threshold": threshold_val,
+        "duration_seconds": duration_val,
+        "action": str(data["action"]).strip(),
+        "replica_delta": delta_val,
+        "cooldown_seconds": cooldown_val,
+    }
+    if not result["id"]:
+        raise PolicyValidationError("Policy 'id' is required")
+    if not result["name"]:
+        raise PolicyValidationError("Policy 'name' is required")
+    return result
 
 
 @app.route("/")
@@ -155,6 +255,89 @@ def get_workloads():
     """Returns verified observed workload state directly from Kubernetes cluster API."""
     workload = controller.executor.get_workload_state()
     return jsonify(workload.to_dict())
+
+
+@app.route("/api/workloads/scale", methods=["POST"])
+@app.route("/api/workload/scale", methods=["POST"])
+@app.route("/api/scale", methods=["POST"])
+def request_workload_scale():
+    """Submit an explicitly confirmed workload scale request through guardrails."""
+    try:
+        data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        target = data.get("target_replicas")
+        if target is None:
+            target = data.get("replicas")
+        if target is None:
+            target = data.get("target")
+        if isinstance(target, bool) or not isinstance(target, int):
+            return jsonify({"error": "target_replicas must be an integer"}), 400
+        if target < 1:
+            return jsonify({"error": "target_replicas must be >= 1"}), 400
+
+        connected, message = controller.executor.is_connected()
+        if not connected:
+            logger.warning("Manual scaling rejected: Kubernetes unavailable: %s", message)
+            return jsonify({"error": f"Kubernetes is unavailable: {message}"}), 409
+
+        workload = controller.executor.get_workload_state()
+        if workload.desired_replicas is None:
+            logger.warning("Manual scaling rejected: workload verification failed: %s", workload.status_message)
+            return jsonify({"error": f"Target workload could not be verified: {workload.status_message}"}), 409
+
+        delta = target - workload.desired_replicas
+        action = "SCALE_OUT" if delta > 0 else "SCALE_IN" if delta < 0 else "HOLD"
+        guardrail, execution = controller.strategy_coordinator.coordinate_and_execute(
+            proposed_action=action,
+            current_replicas=workload.desired_replicas,
+            target_replicas=target,
+            replica_delta=delta,
+        )
+
+        # Query Kubernetes again to verify actual state from cluster API
+        controller.latest_workload_state = controller.executor.get_workload_state()
+        controller.latest_guardrail = guardrail
+        controller.latest_execution = execution
+        success = execution.success and guardrail.action in ("EXECUTE", "HOLD")
+        applied = bool(success and not execution.dry_run and execution.confirmed_replicas == target)
+        verified = bool(applied and controller.latest_workload_state.desired_replicas == target)
+
+        controller.decision_logger.log_cycle(
+            decision={
+                "action": action,
+                "current_replicas": workload.desired_replicas,
+                "proposed_replica_delta": delta,
+                "target_replicas": target,
+                "selected_policy_id": "MANUAL_OPERATOR_REQUEST",
+                "selected_policy_name": "Manual operator request",
+                "priority": 0,
+                "explanation": "Manual operator request submitted through guarded workload control.",
+                "cooldown_active": False,
+                "cooldown_remaining_seconds": 0.0,
+                "competing_proposals": [],
+                "telemetry_summary": {},
+            },
+            guardrail_result=guardrail.to_dict(),
+            execution_result=execution.to_dict(),
+            metrics={},
+            error=execution.error or guardrail.rejection_reason,
+            target_namespace=controller.config.target_namespace,
+            target_deployment=controller.config.target_deployment,
+        )
+        logger.info("Manual scaling result: target=%s guardrail=%s success=%s applied=%s message=%s",
+                    target, guardrail.action, success, applied, execution.message)
+        return jsonify({
+            "success": success,
+            "applied": applied,
+            "verified": verified,
+            "guardrail": guardrail.to_dict(),
+            "execution": execution.to_dict(),
+            "workload": controller.latest_workload_state.to_dict(),
+        }), 200 if success else 409
+    except Exception as exc:
+        logger.exception("Manual scaling request failed")
+        return jsonify({"error": f"Manual scaling request failed: {exc}"}), 500
 
 
 @app.route("/healthz")
@@ -287,6 +470,71 @@ def get_policies():
     })
 
 
+@app.route("/api/policies", methods=["POST"])
+def create_policy():
+    """Create and validate a policy using the existing YAML persistence mechanism."""
+    try:
+        data = request.get_json() or {}
+        policy = _policy_input(data)
+        document = _load_policy_document()
+        if any(item.get("id") == policy["id"] for item in document["policies"]):
+            return jsonify({"error": f"Policy '{policy['id']}' already exists"}), 409
+        document["policies"].append(policy)
+        _persist_policy_document(document)
+        saved = next(rule.to_dict() for rule in controller.policy_engine.rules if rule.id == policy["id"])
+        return jsonify({"success": True, "policy": saved}), 201
+    except PolicyValidationError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except (OSError, yaml.YAMLError) as exc:
+        logger.exception("Policy create failed")
+        return jsonify({"error": f"Failed to persist policy: {exc}"}), 500
+
+
+@app.route("/api/policies/<policy_id>", methods=["PUT"])
+def update_policy(policy_id: str):
+    """Validate and replace one policy while preserving all other YAML configuration."""
+    try:
+        data = request.get_json() or {}
+        document = _load_policy_document()
+        index = next((i for i, item in enumerate(document["policies"])
+                      if item.get("id") == policy_id), None)
+        if index is None:
+            return jsonify({"error": f"Policy '{policy_id}' not found"}), 404
+        document["policies"][index] = _policy_input(data, policy_id=policy_id)
+        _persist_policy_document(document)
+        saved = next(rule.to_dict() for rule in controller.policy_engine.rules if rule.id == policy_id)
+        return jsonify({"success": True, "policy": saved})
+    except PolicyValidationError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except (OSError, yaml.YAMLError) as exc:
+        logger.exception("Policy update failed")
+        return jsonify({"error": f"Failed to persist policy: {exc}"}), 500
+
+
+@app.route("/api/policies/<policy_id>/enabled", methods=["PATCH"])
+def set_policy_enabled(policy_id: str):
+    """Enable or disable a policy and confirm the reloaded configuration."""
+    try:
+        data = request.get_json() or {}
+        if not isinstance(data, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        if not isinstance(data.get("enabled"), bool):
+            return jsonify({"error": "'enabled' must be a boolean"}), 400
+        document = _load_policy_document()
+        policy = next((item for item in document["policies"] if item.get("id") == policy_id), None)
+        if policy is None:
+            return jsonify({"error": f"Policy '{policy_id}' not found"}), 404
+        policy["enabled"] = data["enabled"]
+        _persist_policy_document(document)
+        saved = next(rule.to_dict() for rule in controller.policy_engine.rules if rule.id == policy_id)
+        return jsonify({"success": True, "policy": saved})
+    except PolicyValidationError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except (OSError, yaml.YAMLError) as exc:
+        logger.exception("Policy enablement update failed")
+        return jsonify({"error": f"Failed to persist policy: {exc}"}), 500
+
+
 @app.route("/api/policies/update-threshold", methods=["POST"])
 def update_policy_threshold():
     """Safely updates a policy threshold in memory and in the active YAML config."""
@@ -305,49 +553,29 @@ def update_policy_threshold():
     if not math.isfinite(new_threshold):
         return jsonify({"error": "Threshold must be a finite number"}), 400
 
-    # Find and update rule
-    rule_found = False
-    for r in controller.policy_engine.rules:
-        if r.id == policy_id:
-            # Check percentage bounds
-            if r.metric.endswith("_percent") and (new_threshold < 0.0 or new_threshold > 100.0):
-                return jsonify({"error": f"Percentage threshold for '{r.metric}' must be between 0 and 100"}), 400
-            if new_threshold < 0.0:
-                return jsonify({"error": "Threshold cannot be negative"}), 400
-
-            r.threshold = new_threshold
-            rule_found = True
-            break
-
-    if not rule_found:
-        return jsonify({"error": f"Policy '{policy_id}' not found"}), 404
-
-    # Save to disk
     try:
-        with open(controller.config.policies_path, "r", encoding="utf-8") as f:
-            yaml_data = yaml.safe_load(f)
-
-        for p in yaml_data.get("policies", []):
+        yaml_data = _load_policy_document()
+        target_policy = next((p for p in yaml_data["policies"] if p.get("id") == policy_id), None)
+        if target_policy is None:
+            return jsonify({"error": f"Policy '{policy_id}' not found"}), 404
+        metric = str(target_policy.get("metric", ""))
+        if metric.endswith("_percent") and (new_threshold < 0.0 or new_threshold > 100.0):
+            return jsonify({"error": f"Percentage threshold for '{metric}' must be between 0 and 100"}), 400
+        if new_threshold < 0.0:
+            return jsonify({"error": "Threshold cannot be negative"}), 400
+        for p in yaml_data["policies"]:
             if p.get("id") == policy_id:
                 p["threshold"] = new_threshold
                 break
 
-        with open(controller.config.policies_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(yaml_data, f, sort_keys=False)
+        _persist_policy_document(yaml_data)
 
         logger.info("Updated threshold for policy %s to %f", policy_id, new_threshold)
         return jsonify({
             "success": True,
             "message": f"Updated {policy_id} threshold to {new_threshold}",
         })
-    except Exception as e:
-        logger.error("Failed to persist updated policy: %s", e)
-        return jsonify({"error": f"Failed to persist policy: {str(e)}"}), 500
-        return jsonify({
-            "success": True,
-            "message": f"Updated {policy_id} threshold to {new_threshold}",
-        })
-    except Exception as e:
+    except (OSError, yaml.YAMLError, PolicyValidationError) as e:
         logger.error("Failed to persist updated policy: %s", e)
         return jsonify({"error": f"Failed to persist policy: {str(e)}"}), 500
 

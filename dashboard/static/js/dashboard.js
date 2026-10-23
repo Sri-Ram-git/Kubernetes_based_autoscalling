@@ -11,6 +11,8 @@ let pendingModalAction = null;
 let isSimulationModeActive = false;
 
 document.addEventListener("DOMContentLoaded", () => {
+  loadUiOverrides();
+  ensureWorkloadControls();
   fetchAllData();
 
   // Poll every 3 seconds
@@ -26,6 +28,26 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 });
+
+function loadUiOverrides() {
+  if (document.querySelector('link[data-kubepilot-ui-overrides]')) return;
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = "/static/css/ui-overrides.css";
+  link.dataset.kubepilotUiOverrides = "true";
+  document.head.appendChild(link);
+}
+
+function ensureWorkloadControls() {
+  const table = document.getElementById("pod-table");
+  if (!table || document.getElementById("workload-control-panel")) return;
+  const panel = document.createElement("section");
+  panel.id = "workload-control-panel";
+  panel.className = "panel control-panel";
+  panel.innerHTML = `<div class="panel-header"><div><div class="eyebrow">Guarded manual operation</div><h2>Request replica change</h2><p class="panel-subtitle">Requests pass through the controller guardrails and require a verified Kubernetes connection.</p></div></div><form id="manual-scale-form" class="control-stack"><label for="manual-target-replicas">Target replicas</label><input id="manual-target-replicas" type="number" min="1" max="100" step="1" required><button class="btn btn-danger" id="btn-manual-scale" type="submit">Request guarded scale</button><p id="manual-scale-status" class="control-note" role="status">No operation submitted.</p></form>`;
+  panel.querySelector("#manual-scale-form").addEventListener("submit", requestWorkloadScale);
+  table.closest(".panel").insertAdjacentElement("afterend", panel);
+}
 
 function startPolling() {
   if (pollInterval) clearInterval(pollInterval);
@@ -395,12 +417,23 @@ async function fetchDecisions() {
       return;
     }
 
-    actionBadge.textContent = d.action;
-    if (d.action === "SCALE_OUT") {
+    if (d.cooldown_active) {
+      actionBadge.textContent = `BLOCKED BY COOLDOWN (${d.cooldown_remaining_seconds ? d.cooldown_remaining_seconds.toFixed(0) + 's' : 'ACTIVE'})`;
+      actionBadge.className = "action-badge badge-warning";
+    } else if (g && g.action === "REJECTED") {
+      actionBadge.textContent = "GUARDRAIL REJECTED";
+      actionBadge.className = "action-badge badge-danger";
+    } else if (d.action === "HOLD" && !d.selected_policy_id) {
+      actionBadge.textContent = "NO POLICY MATCHED";
+      actionBadge.className = "action-badge badge-hold";
+    } else if (d.action === "SCALE_OUT") {
+      actionBadge.textContent = "SCALE_OUT";
       actionBadge.className = "action-badge badge-scale-out";
     } else if (d.action === "SCALE_IN") {
+      actionBadge.textContent = "SCALE_IN";
       actionBadge.className = "action-badge badge-scale-in";
     } else {
+      actionBadge.textContent = d.action || "HOLD";
       actionBadge.className = "action-badge badge-hold";
     }
 
@@ -412,7 +445,7 @@ async function fetchDecisions() {
       cooldownPill.className = "cooldown-pill";
     }
 
-    document.getElementById("decision-policy").textContent = d.selected_policy_name || "None (Nominal)";
+    document.getElementById("decision-policy").textContent = d.selected_policy_name || "NO POLICY MATCHED";
     document.getElementById("decision-priority").textContent = d.priority || 0;
     document.getElementById("decision-delta").textContent = d.proposed_replica_delta >= 0 ? `+${d.proposed_replica_delta}` : `${d.proposed_replica_delta}`;
     document.getElementById("decision-target").textContent = d.target_replicas;
@@ -427,26 +460,26 @@ async function fetchDecisions() {
         guardrailText.textContent = `Rejected: ${g.rejection_reason || 'Boundary exceeded'}`;
         guardrailText.style.color = "var(--color-danger)";
       } else {
-        guardrailText.textContent = `HOLD: ${g.authorization_note}`;
+        guardrailText.textContent = `HOLD: ${g.authorization_note || 'Maintained'}`;
         guardrailText.style.color = "var(--text-muted)";
       }
     }
 
-    // Populate competing proposals
+    // Populate competing proposals with properly mapped columns
     const proposalsBody = document.getElementById("proposals-table-body");
     const proposals = d.competing_proposals || [];
     if (proposals.length === 0) {
-      proposalsBody.innerHTML = `<tr><td colspan="7" class="empty-state">No competing proposals triggered in this cycle.</td></tr>`;
+      proposalsBody.innerHTML = `<tr><td colspan="7" class="empty-state">NO POLICY MATCHED — Workload operating within nominal parameters.</td></tr>`;
     } else {
       proposalsBody.innerHTML = proposals.map(p => `
         <tr>
           <td><span class="badge font-mono">${p.priority}</span></td>
           <td><strong>${escapeHtml(p.policy_name)}</strong></td>
           <td><span class="font-mono ${p.action === 'SCALE_OUT' ? 'highlight' : ''}">${p.action}</span></td>
-          <td>${p.replica_delta >= 0 ? '+' : ''}${p.replica_delta}</td>
-          <td>${p.observed_value !== null ? p.observed_value.toFixed(1) : '--'}</td>
-          <td>${p.threshold}</td>
-          <td><small>${escapeHtml(p.reason)}</small></td>
+          <td class="font-mono">${p.replica_delta >= 0 ? '+' : ''}${p.replica_delta}</td>
+          <td class="font-mono">${p.observed_value !== null && p.observed_value !== undefined ? Number(p.observed_value).toFixed(1) : '--'}</td>
+          <td class="font-mono">${p.threshold !== null && p.threshold !== undefined ? p.threshold : '--'}</td>
+          <td><small>${escapeHtml(p.reason || '')}</small></td>
         </tr>
       `).join("");
     }
@@ -469,7 +502,7 @@ async function fetchPolicies() {
 
     const tbody = document.getElementById("policies-table-body");
     if (policies.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="9" class="empty-state">No policies found.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="10" class="empty-state">No policies found.</td></tr>`;
       return;
     }
 
@@ -481,30 +514,119 @@ async function fetchPolicies() {
       let statusHtml = '<small class="text-muted">Awaiting cycle</small>';
       if (ev) {
         if (ev.matched) {
-          statusHtml = `<span class="badge badge-accent">&#10003; MATCHED</span><br><small title="${escapeHtml(ev.reason)}">${escapeHtml(ev.reason)}</small>`;
+          statusHtml = `<span class="policy-status policy-status-match">&#10003; MATCHED</span><br><small title="${escapeHtml(ev.reason)}">${escapeHtml(ev.reason)}</small>`;
         } else if (!ev.evaluable) {
-          statusHtml = `<span class="badge" style="background: rgba(245, 158, 11, 0.2); color: #f59e0b;">&#9888; UNEVALUABLE</span><br><small title="${escapeHtml(ev.reason)}">${escapeHtml(ev.reason)}</small>`;
+          statusHtml = `<span class="policy-status policy-status-warning">&#9888; UNEVALUABLE</span><br><small title="${escapeHtml(ev.reason)}">${escapeHtml(ev.reason)}</small>`;
         } else {
-          statusHtml = `<span class="badge" style="background: rgba(148, 163, 184, 0.2); color: #94a3b8;">NOT BREACHED</span><br><small class="text-muted" title="${escapeHtml(ev.reason)}">${escapeHtml(ev.reason)}</small>`;
+          statusHtml = `<span class="policy-status policy-status-muted">NOT BREACHED</span><br><small class="text-muted" title="${escapeHtml(ev.reason)}">${escapeHtml(ev.reason)}</small>`;
         }
       }
 
-      return `
+       return `
         <tr>
           <td class="font-mono"><small>${escapeHtml(p.id)}</small></td>
           <td><strong>${escapeHtml(p.name)}</strong></td>
           <td><span class="badge">${p.priority}</span></td>
           <td><small class="font-mono">${escapeHtml(p.metric)}</small></td>
-          <td class="font-mono"><strong>${p.operator}</strong> ${p.threshold}</td>
+          <td><span class="policy-condition"><span class="operator font-mono">${escapeHtml(p.operator || p.operator_str || "")}</span> <span class="font-mono">${escapeHtml(String(p.threshold))}</span></span></td>
           <td><span class="font-mono ${p.action === 'SCALE_OUT' ? 'text-success' : (p.action === 'SCALE_IN' ? 'text-danger' : '')}">${p.action}</span></td>
           <td class="font-mono">${p.replica_delta >= 0 ? '+' : ''}${p.replica_delta}</td>
           <td>${p.cooldown_seconds}s</td>
           <td>${statusHtml}</td>
+          <td class="policy-actions">
+            <button class="btn btn-sm btn-quiet" type="button" onclick='editPolicy(${JSON.stringify(p)})'>Edit</button>
+            <button class="btn btn-sm ${p.enabled ? "btn-warning" : "btn-secondary"}" type="button" onclick="togglePolicy('${escapeHtml(p.id)}', ${!p.enabled})">${p.enabled ? "Disable" : "Enable"}</button>
+          </td>
         </tr>
       `;
     }).join("");
   } catch (e) {
     console.error("fetchPolicies error:", e);
+  }
+}
+
+function editPolicy(policy) {
+  document.getElementById("policy-edit-id").value = policy.id;
+  document.getElementById("policy-id").value = policy.id;
+  document.getElementById("policy-id").disabled = true;
+  document.getElementById("policy-name").value = policy.name || "";
+  document.getElementById("policy-metric").value = policy.metric;
+  document.getElementById("policy-operator").value = policy.operator || policy.operator_str || ">";
+  document.getElementById("policy-threshold").value = policy.threshold;
+  document.getElementById("policy-priority").value = policy.priority;
+  document.getElementById("policy-action").value = policy.action;
+  document.getElementById("policy-delta").value = policy.replica_delta;
+  document.getElementById("policy-duration").value = policy.duration_seconds;
+  document.getElementById("policy-cooldown").value = policy.cooldown_seconds;
+  document.getElementById("policy-description").value = policy.description || "";
+  document.getElementById("policy-enabled").checked = policy.enabled !== false;
+  document.getElementById("policy-save-btn").textContent = "Save policy";
+  document.getElementById("policy-editor").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function resetPolicyEditor() {
+  const form = document.getElementById("policy-editor");
+  if (!form) return;
+  form.reset();
+  document.getElementById("policy-edit-id").value = "";
+  document.getElementById("policy-id").disabled = false;
+  document.getElementById("policy-save-btn").textContent = "Create policy";
+  document.getElementById("policy-editor-status").textContent = "";
+}
+
+function policyPayload() {
+  return {
+    id: document.getElementById("policy-id").value.trim(),
+    name: document.getElementById("policy-name").value.trim(),
+    description: document.getElementById("policy-description").value.trim(),
+    metric: document.getElementById("policy-metric").value,
+    operator: document.getElementById("policy-operator").value,
+    threshold: Number(document.getElementById("policy-threshold").value),
+    priority: Number(document.getElementById("policy-priority").value),
+    action: document.getElementById("policy-action").value,
+    replica_delta: Number(document.getElementById("policy-delta").value),
+    duration_seconds: Number(document.getElementById("policy-duration").value),
+    cooldown_seconds: Number(document.getElementById("policy-cooldown").value),
+    enabled: document.getElementById("policy-enabled").checked,
+  };
+}
+
+async function savePolicy(event) {
+  event.preventDefault();
+  const status = document.getElementById("policy-editor-status");
+  const id = document.getElementById("policy-edit-id").value;
+  const btn = document.getElementById("policy-save-btn");
+  btn.disabled = true;
+  status.textContent = "Validating and saving…";
+  try {
+    const res = await fetch(id ? `/api/policies/${encodeURIComponent(id)}` : "/api/policies", {
+      method: id ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(policyPayload()),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Policy was not saved");
+    status.textContent = `Confirmed saved: ${data.policy.id} (${data.policy.enabled ? "enabled" : "disabled"}).`;
+    resetPolicyEditor();
+    await fetchAllData();
+  } catch (error) {
+    status.textContent = `Not saved: ${error.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function togglePolicy(policyId, enabled) {
+  if (!window.confirm(`${enabled ? "Enable" : "Disable"} policy ${policyId}?`)) return;
+  try {
+    const res = await fetch(`/api/policies/${encodeURIComponent(policyId)}/enabled`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Policy state was not changed");
+    await fetchAllData();
+  } catch (error) {
+    window.alert(error.message);
   }
 }
 
@@ -514,13 +636,17 @@ async function fetchHistory() {
     if (!res.ok) return;
     const data = await res.json();
     const records = data.records || [];
-    if (!document.getElementById("history-table-body")) return;
+    const tbody = document.getElementById("history-table-body");
+    if (!tbody) return;
     const histBadge = document.getElementById("history-count-badge");
     if (histBadge) histBadge.textContent = `${records.length} records`;
 
-    const tbody = document.getElementById("history-table-body");
+    const isHistoryPage = !!document.getElementById("history-table");
+
     if (records.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="8" class="empty-state">No execution records logged yet.</td></tr>`;
+      tbody.innerHTML = isHistoryPage
+        ? `<tr><td colspan="7" class="empty-state">No execution records logged yet.</td></tr>`
+        : `<tr><td colspan="5" class="empty-state">No verified decision records loaded.</td></tr>`;
       return;
     }
 
@@ -529,20 +655,60 @@ async function fetchHistory() {
       const g = r.guardrail || {};
       const e = r.execution || {};
       const ts = r.timestamp ? r.timestamp.replace("T", " ").substring(11, 19) : "--";
-      const isDry = g.is_dry_run ? "DRY RUN" : "LIVE";
 
-      return `
-        <tr>
-          <td class="font-mono"><small>${ts}</small></td>
-          <td><span class="badge ${d.action === 'SCALE_OUT' ? 'badge-accent' : ''}">${d.action || 'HOLD'}</span></td>
-          <td class="font-mono">${d.current_replicas ?? '-'} &rarr; ${g.authorized_target_replicas ?? d.target_replicas ?? '-'}</td>
-          <td><small class="font-mono">${isDry}</small></td>
-          <td><small>${escapeHtml(d.selected_policy_id || 'Nominal')}</small></td>
-          <td><small>${g.action || 'HOLD'}</small></td>
-          <td><small>${escapeHtml(e.message || g.authorization_note || '')}</small></td>
-          <td><small style="color: var(--text-dim);">${escapeHtml((d.explanation || '').substring(0, 80))}...</small></td>
-        </tr>
-      `;
+      const mode = r.mode || (g.is_dry_run ? "DRY_RUN" : "LIVE");
+      const isDry = mode === "DRY_RUN";
+      const action = r.proposed_action || d.action || "HOLD";
+      const status = r.status || (e.success ? (isDry ? "DRY_RUN" : "VERIFIED") : (g.action === "REJECTED" ? "BLOCKED" : "HOLD"));
+      const policyId = r.policy_id || d.selected_policy_id || "Nominal";
+      const explanation = r.explanation || e.message || d.explanation || g.authorization_note || "";
+
+      let statusClass = "badge";
+      if (status === "VERIFIED") statusClass = "badge badge-success";
+      else if (status === "BLOCKED") statusClass = "badge badge-warning";
+      else if (status === "FAILED") statusClass = "badge badge-danger";
+      else if (status === "DRY_RUN") statusClass = "badge badge-accent";
+      else if (status === "EXECUTED") statusClass = "badge badge-accent";
+
+      let actionClass = "badge";
+      if (action === "SCALE_OUT") actionClass = "badge badge-accent";
+      else if (action === "SCALE_IN") actionClass = "badge badge-scale-in";
+
+      const prev = r.previous_replicas ?? d.current_replicas ?? "-";
+      let repStr = `${prev}`;
+      if (action !== "HOLD") {
+        if (isDry) {
+          repStr = `${prev} &rarr; ${r.requested_replicas ?? d.target_replicas ?? '-'} <small class="text-muted">(preview)</small>`;
+        } else if (status === "VERIFIED") {
+          repStr = `${prev} &rarr; ${r.resulting_replicas ?? e.confirmed_replicas ?? '-'}`;
+        } else {
+          repStr = `${prev} &rarr; ${r.requested_replicas ?? d.target_replicas ?? '-'}`;
+        }
+      }
+
+      if (isHistoryPage) {
+        return `
+          <tr>
+            <td class="font-mono"><small>${ts}</small></td>
+            <td><span class="${actionClass}">${action}</span></td>
+            <td class="font-mono">${repStr}</td>
+            <td><small class="font-mono">${mode}</small></td>
+            <td><small>${escapeHtml(policyId)}</small></td>
+            <td><span class="${statusClass}">${status}</span></td>
+            <td><small title="${escapeHtml(explanation)}">${escapeHtml(explanation.substring(0, 85))}${explanation.length > 85 ? '…' : ''}</small></td>
+          </tr>
+        `;
+      } else {
+        return `
+          <tr>
+            <td class="font-mono"><small>${ts}</small></td>
+            <td><span class="${actionClass}">${action}</span></td>
+            <td><small class="font-mono">${mode}</small></td>
+            <td><small>${escapeHtml(policyId)}</small></td>
+            <td><span class="${statusClass}" style="margin-right: 6px;">${status}</span><small title="${escapeHtml(explanation)}">${escapeHtml(explanation.substring(0, 60))}${explanation.length > 60 ? '…' : ''}</small></td>
+          </tr>
+        `;
+      }
     }).join("");
   } catch (e) {
     console.error("fetchHistory error:", e);
@@ -550,6 +716,33 @@ async function fetchHistory() {
 }
 
 // ==============================================================================
+async function requestWorkloadScale(event) {
+  event.preventDefault();
+  const target = Number(document.getElementById("manual-target-replicas").value);
+  const status = document.getElementById("manual-scale-status");
+  const button = document.getElementById("btn-manual-scale");
+  if (!status || !button) return;
+  if (!Number.isInteger(target) || target < 1) { status.textContent = "Target replicas must be a positive integer."; return; }
+  if (!window.confirm(`Request a guarded scale operation to ${target} replicas?`)) return;
+  button.disabled = true; status.textContent = "Submitting to the controller…";
+  try {
+    const res = await fetch("/api/workloads/scale", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ target_replicas: target }) });
+    const data = await res.json().catch(() => ({ error: `Backend returned HTTP ${res.status} without JSON` }));
+    if (!res.ok) {
+      const detail = data.error || data.execution?.error || data.execution?.message || `HTTP ${res.status}`;
+      throw new Error(detail);
+    }
+    const workload = data.workload || {};
+    const stateText = workload.connected
+      ? `Verified state: desired ${workload.desired_replicas}, observed ${workload.current_replicas}, ready ${workload.ready_replicas}.`
+      : "Kubernetes state could not be verified.";
+    const outcome = data.applied ? "Kubernetes state applied and verified." : "No Kubernetes mutation was applied.";
+    status.textContent = `${data.execution?.message || "Controller completed the request."} ${outcome} ${stateText}`;
+    await fetchAllData();
+  } catch (error) { status.textContent = `Operation not completed: ${error.message}`; }
+  finally { button.disabled = false; }
+}
+
 // Interactive Control Handlers
 // ==============================================================================
 

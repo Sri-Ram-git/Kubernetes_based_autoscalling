@@ -105,9 +105,18 @@ class AutoscalingController:
         )
 
     def reload_policies(self, path: Optional[str] = None) -> None:
-        """Safely reload policies from disk."""
+        """Safely reload policies from disk and update target workload."""
         target_path = path or self.config.policies_path
         self.policy_engine.load_from_yaml(target_path)
+        if self.policy_engine.target_workload:
+            ns = self.policy_engine.target_workload.get("namespace")
+            name = self.policy_engine.target_workload.get("name")
+            if ns:
+                self.config.target_namespace = ns
+                self.executor.namespace = ns
+            if name:
+                self.config.target_deployment = name
+                self.executor.deployment_name = name
         logger.info("Policies successfully reloaded from %s", target_path)
 
     def fetch_current_telemetry(self) -> Dict[str, MetricSample]:
@@ -190,6 +199,8 @@ class AutoscalingController:
                 execution_result=exec_res.to_dict(),
                 metrics=metrics_summary,
                 error=exec_res.error or guardrail_res.rejection_reason,
+                target_namespace=self.config.target_namespace,
+                target_deployment=self.config.target_deployment,
             )
 
             logger.info(

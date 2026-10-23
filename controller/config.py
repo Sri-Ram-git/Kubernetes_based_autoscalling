@@ -42,6 +42,23 @@ class ControllerConfig:
     # Simulation mode support for local demonstrations without Prometheus
     simulation_mode: bool = os.getenv("SIMULATION_MODE", "false").lower() in ("true", "1", "yes")
 
+    def __post_init__(self) -> None:
+        """Anchor repository-relative persistence paths to the project root.
+
+        The dashboard is commonly launched from the repository root, but it is
+        also launched as ``python dashboard/app.py`` or from a container. A
+        relative path otherwise makes policy and audit writes depend on the
+        caller's current working directory.
+        """
+        project_root = Path(__file__).resolve().parent.parent
+        self.policies_path = str(self._resolve_path(self.policies_path, project_root))
+        self.log_file_path = str(self._resolve_path(self.log_file_path, project_root))
+
+    @staticmethod
+    def _resolve_path(value: str, project_root: Path) -> Path:
+        path = Path(value)
+        return path if path.is_absolute() else project_root / path
+
     def is_live_execution_permitted(self) -> bool:
         """Live execution is permitted only when dry_run is False and enable_live_execution is True."""
         return (not self.dry_run) and self.enable_live_execution
@@ -71,8 +88,9 @@ class ControllerConfig:
     def load(cls, config_path: Optional[str] = None) -> "ControllerConfig":
         """Load configuration from file if provided, overriding with environment variables."""
         instance = cls()
-        if config_path and Path(config_path).exists():
-            with open(config_path, "r", encoding="utf-8") as f:
+        target_file = config_path or instance.policies_path
+        if target_file and Path(target_file).exists():
+            with open(target_file, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
             
             # Parse workload

@@ -30,7 +30,8 @@ def test_dry_run_scaling_execution():
     assert res.dry_run is True
     assert res.initial_replicas == 2
     assert res.target_replicas == 4
-    assert res.confirmed_replicas == 4
+    assert res.confirmed_replicas is None
+    assert executor._simulated_replicas == 2
     assert "[DRY-RUN PREVIEW]" in res.message
 
 

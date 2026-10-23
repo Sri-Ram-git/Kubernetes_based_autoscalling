@@ -1,0 +1,239 @@
+/* KubePilot UI refinement layer. Keeps the existing palette and component names. */
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+input,
+select,
+textarea {
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  color: var(--faint);
+  background: #f3f0ea;
+  cursor: not-allowed;
+}
+
+.policy-editor {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 14px 12px;
+  padding: 2px 21px 21px;
+  align-items: end;
+}
+
+.policy-editor label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font: 10px var(--mono);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.policy-editor label:nth-of-type(1) { grid-column: span 3; }
+.policy-editor label:nth-of-type(2) { grid-column: span 5; }
+.policy-editor label:nth-of-type(3) { grid-column: span 4; }
+.policy-editor label:nth-of-type(4) { grid-column: span 2; }
+.policy-editor label:nth-of-type(5) { grid-column: span 3; }
+.policy-editor label:nth-of-type(6) { grid-column: span 2; }
+.policy-editor label:nth-of-type(7) { grid-column: span 3; }
+.policy-editor label:nth-of-type(8) { grid-column: span 2; }
+.policy-editor label:nth-of-type(9) { grid-column: span 2; }
+.policy-editor label:nth-of-type(10) { grid-column: span 2; }
+.policy-editor label.policy-editor-wide { grid-column: span 8; }
+
+.policy-editor input:not([type="checkbox"]),
+.policy-editor select {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  font: 12px var(--sans);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.policy-editor input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.policy-editor .policy-enabled {
+  grid-column: span 2;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  align-self: end;
+  gap: 8px;
+  min-height: 36px;
+  color: var(--ink);
+  font: 12px var(--sans);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.policy-editor-actions {
+  grid-column: span 2;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.policy-editor-actions .btn {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.policy-editor-status {
+  grid-column: 1 / -1;
+  margin: 0;
+  min-height: 0;
+}
+
+.policy-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.btn-sm {
+  min-height: 30px;
+  padding: 6px 9px;
+  white-space: nowrap;
+}
+
+#policies-table {
+  min-width: 1120px;
+}
+
+#policies-table th,
+#policies-table td {
+  vertical-align: middle;
+}
+
+#policies-table th:nth-child(3),
+#policies-table th:nth-child(7),
+#policies-table th:nth-child(8),
+#policies-table td:nth-child(3),
+#policies-table td:nth-child(7),
+#policies-table td:nth-child(8) {
+  text-align: right;
+}
+
+#policies-table th:nth-child(5),
+#policies-table td:nth-child(5) {
+  min-width: 130px;
+}
+
+#policies-table td:nth-child(9) {
+  min-width: 210px;
+  max-width: 280px;
+  white-space: normal;
+  line-height: 1.4;
+}
+
+#policies-table td:nth-child(10) {
+  min-width: 150px;
+}
+
+.policy-condition {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.policy-condition .operator {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.policy-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 4px;
+}
+
+.policy-status-match { color: var(--green); }
+.policy-status-warning { color: var(--amber); }
+.policy-status-muted { color: var(--muted); }
+
+.data-table small {
+  line-height: 1.4;
+}
+
+@media (max-width: 1100px) {
+  .policy-editor label:nth-of-type(1),
+  .policy-editor label:nth-of-type(2),
+  .policy-editor label:nth-of-type(3),
+  .policy-editor label:nth-of-type(4),
+  .policy-editor label:nth-of-type(5),
+  .policy-editor label:nth-of-type(6),
+  .policy-editor label:nth-of-type(7),
+  .policy-editor label:nth-of-type(8),
+  .policy-editor label:nth-of-type(9),
+  .policy-editor label:nth-of-type(10),
+  .policy-editor label.policy-editor-wide,
+  .policy-editor .policy-enabled,
+  .policy-editor-actions {
+    grid-column: span 4;
+  }
+}
+
+@media (max-width: 700px) {
+  .policy-editor {
+    grid-template-columns: 1fr 1fr;
+    gap: 12px 10px;
+    padding: 0 16px 16px;
+  }
+
+  .policy-editor label:nth-of-type(1),
+  .policy-editor label:nth-of-type(2),
+  .policy-editor label:nth-of-type(3),
+  .policy-editor label:nth-of-type(4),
+  .policy-editor label:nth-of-type(5),
+  .policy-editor label:nth-of-type(6),
+  .policy-editor label:nth-of-type(7),
+  .policy-editor label:nth-of-type(8),
+  .policy-editor label:nth-of-type(9),
+  .policy-editor label:nth-of-type(10),
+  .policy-editor label.policy-editor-wide,
+  .policy-editor .policy-enabled,
+  .policy-editor-actions,
+  .policy-editor-status {
+    grid-column: 1 / -1;
+  }
+
+  .policy-actions {
+    flex-wrap: wrap;
+  }
+
+  #policies-table {
+    min-width: 980px;
+  }
+}

@@ -215,7 +215,10 @@ class KubernetesExecutor:
                 pods=pod_list,
             )
         except ApiException as e:
-            msg = f"Kubernetes API error (HTTP {e.status}): {e.reason}"
+            if e.status == 404:
+                msg = f"Deployment '{self.deployment_name}' not found in namespace '{self.namespace}'"
+            else:
+                msg = f"Kubernetes API error (HTTP {e.status}): {e.reason}"
             logger.error("Failed to read deployment %s: %s", self.deployment_name, msg)
             return WorkloadState(
                 namespace=self.namespace,
@@ -283,14 +286,13 @@ class KubernetesExecutor:
                 target_replicas,
                 action,
             )
-            # Update local simulation state for demonstration
-            self._simulated_replicas = target_replicas
+            # Dry-run must never mutate simulated state or modify the cluster
             return ExecutionResult(
                 success=True,
                 dry_run=True,
                 initial_replicas=initial_replicas,
                 target_replicas=target_replicas,
-                confirmed_replicas=target_replicas,
+                confirmed_replicas=None,
                 action_type=action,
                 message=f"[DRY-RUN PREVIEW] Would scale {self.deployment_name} from {initial_replicas} to {target_replicas}. No cluster changes applied.",
                 execution_duration_ms=(time.time() - start_time) * 1000,

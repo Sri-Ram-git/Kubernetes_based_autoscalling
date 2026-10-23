@@ -31,12 +31,44 @@
           <th>Delta</th>
           <th>Cooldown</th>
           <th>Evaluation Status</th>
+          <th>Controls</th>
         </tr>
       </thead>
       <tbody id="policies-table-body">
-        <tr><td colspan="9" class="empty-state">Loading policies…</td></tr>
+        <tr><td colspan="10" class="empty-state">Loading policies…</td></tr>
       </tbody>
     </table>
   </div>
+</section>
+
+<section class="panel control-panel">
+  <div class="panel-header">
+    <div>
+      <div class="eyebrow">Validated YAML mutation</div>
+      <h2>Create or edit a policy</h2>
+      <p class="panel-subtitle">Changes are validated by the policy engine and only shown after the active configuration reloads successfully.</p>
+    </div>
+  </div>
+  <form id="policy-editor" class="policy-editor" onsubmit="savePolicy(event)">
+    <input type="hidden" id="policy-edit-id">
+    <label>ID <input id="policy-id" required pattern="[A-Za-z0-9_-]+"></label>
+    <label>Name <input id="policy-name" required></label>
+    <label>Metric <select id="policy-metric" required>
+      <option value="cpu_utilization_percent">cpu_utilization_percent</option>
+      <option value="memory_utilization_percent">memory_utilization_percent</option>
+      <option value="http_requests_per_second">http_requests_per_second</option>
+    </select></label>
+    <label>Operator <select id="policy-operator" required><option>&gt;</option><option>&gt;=</option><option>&lt;</option><option>&lt;=</option><option>==</option><option>!=</option></select></label>
+    <label>Threshold <input id="policy-threshold" type="number" min="0" step="any" required></label>
+    <label>Priority <input id="policy-priority" type="number" min="1" step="1" required></label>
+    <label>Action <select id="policy-action" required><option>SCALE_OUT</option><option>SCALE_IN</option><option>HOLD</option></select></label>
+    <label>Replica delta <input id="policy-delta" type="number" step="1" required></label>
+    <label>Duration (s) <input id="policy-duration" type="number" min="0" step="any" value="0" required></label>
+    <label>Cooldown (s) <input id="policy-cooldown" type="number" min="0" step="any" value="60" required></label>
+    <label class="policy-editor-wide">Description <input id="policy-description"></label>
+    <label class="policy-enabled"><input id="policy-enabled" type="checkbox" checked> Enabled</label>
+    <div class="policy-editor-actions"><button class="btn btn-primary" type="submit" id="policy-save-btn">Create policy</button><button class="btn btn-quiet" type="button" onclick="resetPolicyEditor()">Clear</button></div>
+    <p id="policy-editor-status" class="control-note" role="status"></p>
+  </form>
 </section>
 {% endblock %}

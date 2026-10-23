@@ -3,7 +3,13 @@ Integration tests for Dashboard REST API endpoints and error states.
 """
 
 import pytest
+import yaml
+from pathlib import Path
 from dashboard.app import app
+from controller.guardrails import GuardrailResult
+from controller.kubernetes_executor import ExecutionResult, WorkloadState
+from controller.policy_engine import PolicyEngine
+import dashboard.app as dashboard_module
 
 
 @pytest.fixture
@@ -167,3 +173,115 @@ def test_api_update_threshold_validation(client):
         json={"id": "NON_EXISTENT_POLICY", "threshold": 50.0},
     )
     assert res3.status_code == 404
+
+
+def test_policy_create_validates_against_existing_engine(client):
+    response = client.post("/api/policies", json={
+        "id": "INVALID_POLICY",
+        "name": "Invalid",
+        "metric": "unsupported_metric",
+        "operator": ">",
+        "threshold": 10,
+        "priority": 10,
+        "action": "SCALE_OUT",
+        "replica_delta": 1,
+    })
+    assert response.status_code == 400
+    assert "unsupported metric" in response.get_json()["error"]
+
+
+def test_policy_create_update_persists_and_reloads(client, monkeypatch):
+    original_path = dashboard_module.controller.config.policies_path
+    policy_path = Path("tests") / ".policy-persistence-regression.yaml"
+    policy_path.write_text(Path(original_path).read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(dashboard_module.controller.config, "policies_path", str(policy_path))
+    dashboard_module.controller.reload_policies()
+    try:
+        payload = {
+            "id": "PERSISTENCE_REGRESSION",
+            "name": "Persistence regression",
+            "metric": "cpu_utilization_percent",
+            "operator": ">",
+            "threshold": 66,
+            "priority": 11,
+            "action": "SCALE_OUT",
+            "replica_delta": 1,
+            "duration_seconds": 0,
+            "cooldown_seconds": 15,
+            "enabled": True,
+        }
+        created = client.post("/api/policies", json=payload)
+        assert created.status_code == 201
+        saved = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+        assert next(p for p in saved["policies"] if p["id"] == payload["id"])["threshold"] == 66
+
+        updated = dict(payload, threshold=72)
+        changed = client.put(f"/api/policies/{payload['id']}", json=updated)
+        assert changed.status_code == 200
+        dashboard_module.controller.reload_policies()
+        active = next(r for r in dashboard_module.controller.policy_engine.rules if r.id == payload["id"])
+        assert active.threshold == 72
+        restarted_engine = PolicyEngine(str(policy_path))
+        persisted = next(r for r in restarted_engine.rules if r.id == payload["id"])
+        assert persisted.threshold == 72
+    finally:
+        dashboard_module.controller.config.policies_path = original_path
+        dashboard_module.controller.reload_policies()
+        policy_path.unlink(missing_ok=True)
+
+
+def test_policy_enabled_rejects_non_boolean(client):
+    response = client.post("/api/policies", json={
+        "id": "BAD_ENABLED",
+        "name": "Bad enabled",
+        "metric": "cpu_utilization_percent",
+        "operator": ">",
+        "threshold": 50,
+        "priority": 10,
+        "action": "SCALE_OUT",
+        "replica_delta": 1,
+        "enabled": "false",
+    })
+    assert response.status_code == 400
+    assert "enabled" in response.get_json()["error"]
+
+
+def test_manual_scale_rejects_bad_payload(client):
+    response = client.post("/api/workloads/scale", json={"target_replicas": "3"})
+    assert response.status_code == 400
+    assert "integer" in response.get_json()["error"]
+
+
+def test_manual_scale_returns_verified_workload_state(client, monkeypatch):
+    states = [
+        WorkloadState("autoscaling-demo", "sample-web-app", 2, 2, 2, 2, 0, True, "Connected", []),
+        WorkloadState("autoscaling-demo", "sample-web-app", 5, 5, 5, 5, 0, True, "Connected", []),
+    ]
+    monkeypatch.setattr(dashboard_module.controller.executor, "is_connected", lambda: (True, "Kubernetes API reachable."))
+    monkeypatch.setattr(dashboard_module.controller.executor, "get_workload_state", lambda: states.pop(0))
+    monkeypatch.setattr(
+        dashboard_module.controller.strategy_coordinator,
+        "coordinate_and_execute",
+        lambda **kwargs: (
+            GuardrailResult(True, "EXECUTE", 5, 5, 3, False, None, False, "Authorized"),
+            ExecutionResult(True, False, 2, 5, 5, "SCALE_OUT", "Verified by Kubernetes API."),
+        ),
+    )
+
+    response = client.post("/api/workloads/scale", json={"target_replicas": 5})
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["success"] is True
+    assert payload["workload"]["desired_replicas"] == 5
+    assert payload["execution"]["confirmed_replicas"] == 5
+
+
+def test_manual_scale_exposes_kubernetes_unavailable(client, monkeypatch):
+    monkeypatch.setattr(
+        dashboard_module.controller.executor,
+        "is_connected",
+        lambda: (False, "forbidden: deployments/scale is not permitted"),
+    )
+    response = client.post("/api/workloads/scale", json={"target_replicas": 5})
+    assert response.status_code == 409
+    assert "forbidden" in response.get_json()["error"]
