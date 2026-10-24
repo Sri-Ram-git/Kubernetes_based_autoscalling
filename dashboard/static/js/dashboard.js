@@ -564,14 +564,17 @@ function editPolicy(policy) {
   document.getElementById("policy-editor").scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
-function resetPolicyEditor() {
+function resetPolicyEditor(clearStatus = true) {
   const form = document.getElementById("policy-editor");
   if (!form) return;
   form.reset();
   document.getElementById("policy-edit-id").value = "";
   document.getElementById("policy-id").disabled = false;
   document.getElementById("policy-save-btn").textContent = "Create policy";
-  document.getElementById("policy-editor-status").textContent = "";
+  if (clearStatus) {
+    const statusEl = document.getElementById("policy-editor-status");
+    if (statusEl) statusEl.textContent = "";
+  }
 }
 
 function policyPayload() {
@@ -601,13 +604,28 @@ async function savePolicy(event) {
   try {
     const res = await fetch(id ? `/api/policies/${encodeURIComponent(id)}` : "/api/policies", {
       method: id ? "PUT" : "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
       body: JSON.stringify(policyPayload()),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Policy was not saved");
+
+    const contentType = res.headers.get("content-type") || "";
+    let data = null;
+    if (contentType.includes("application/json")) {
+      data = await res.json();
+    } else {
+      const text = await res.text();
+      throw new Error(`Server returned status ${res.status} (${res.statusText || "non-JSON response"})`);
+    }
+
+    if (!res.ok) {
+      throw new Error(data && data.error ? data.error : `Policy was not saved (HTTP ${res.status})`);
+    }
+
+    resetPolicyEditor(false);
     status.textContent = `Confirmed saved: ${data.policy.id} (${data.policy.enabled ? "enabled" : "disabled"}).`;
-    resetPolicyEditor();
     await fetchAllData();
   } catch (error) {
     status.textContent = `Not saved: ${error.message}`;
@@ -620,13 +638,30 @@ async function togglePolicy(policyId, enabled) {
   if (!window.confirm(`${enabled ? "Enable" : "Disable"} policy ${policyId}?`)) return;
   try {
     const res = await fetch(`/api/policies/${encodeURIComponent(policyId)}/enabled`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }),
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
+      body: JSON.stringify({ enabled }),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Policy state was not changed");
+
+    const contentType = res.headers.get("content-type") || "";
+    let data = null;
+    if (contentType.includes("application/json")) {
+      data = await res.json();
+    } else {
+      const text = await res.text();
+      throw new Error(`Server returned status ${res.status} (${res.statusText || "non-JSON response"})`);
+    }
+
+    if (!res.ok) {
+      throw new Error(data && data.error ? data.error : `Policy state was not changed (HTTP ${res.status})`);
+    }
+
     await fetchAllData();
   } catch (error) {
-    window.alert(error.message);
+    window.alert(`Failed to update policy: ${error.message}`);
   }
 }
 

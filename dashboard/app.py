@@ -6,14 +6,15 @@ REST API-backed Dashboard providing live telemetry monitoring, PRAH decision ins
 policy management, audit history, and operational safety controls.
 """
 
+import copy
 import json
 import logging
 import math
 import os
-import copy
-import tempfile
 from pathlib import Path
+import re
 import sys
+import tempfile
 import time
 from typing import Any, Dict
 
@@ -27,7 +28,13 @@ import yaml
 
 from controller.config import ControllerConfig
 from controller.main import AutoscalingController
-from controller.policy_engine import PolicyEngine, PolicyValidationError
+from controller.policy_engine import (
+    PolicyEngine,
+    PolicyValidationError,
+    SUPPORTED_METRICS,
+    SUPPORTED_OPERATORS,
+    SUPPORTED_ACTIONS,
+)
 from controller.telemetry import MetricStatus
 
 logging.basicConfig(
@@ -82,7 +89,7 @@ def _persist_policy_document(document: Dict[str, Any]) -> None:
 
 
 def _policy_input(data: Dict[str, Any], policy_id: str | None = None) -> Dict[str, Any]:
-    """Normalize the public policy payload while keeping the existing YAML schema."""
+    """Normalize and strictly validate the policy payload while keeping the existing YAML schema."""
     if not isinstance(data, dict):
         raise PolicyValidationError("Policy payload must be a JSON object")
     if "enabled" in data and not isinstance(data["enabled"], bool):
@@ -95,13 +102,38 @@ def _policy_input(data: Dict[str, Any], policy_id: str | None = None) -> Dict[st
     if missing:
         raise PolicyValidationError(f"Missing required policy fields: {', '.join(missing)}")
 
+    p_id = str(policy_id or data.get("id") or "").strip()
+    if not p_id:
+        raise PolicyValidationError("Policy 'id' is required")
+    if not re.match(r"^[A-Za-z0-9_-]+$", p_id):
+        raise PolicyValidationError("Policy 'id' must contain only alphanumeric characters, underscores, and hyphens")
+
+    name = str(data["name"]).strip()
+    if not name:
+        raise PolicyValidationError("Policy 'name' is required")
+
+    metric = str(data["metric"]).strip()
+    if metric not in SUPPORTED_METRICS:
+        raise PolicyValidationError(f"Policy '{p_id}' references unsupported metric '{metric}'. Supported metrics: {sorted(list(SUPPORTED_METRICS))}")
+
+    op_clean = str(op).strip()
+    if op_clean not in SUPPORTED_OPERATORS:
+        raise PolicyValidationError(f"Invalid operator '{op_clean}'. Supported operators: {sorted(list(SUPPORTED_OPERATORS.keys()))}")
+
+    action = str(data["action"]).strip()
+    if action not in SUPPORTED_ACTIONS:
+        raise PolicyValidationError(f"Invalid action '{action}'. Supported actions: {sorted(list(SUPPORTED_ACTIONS))}")
+
     # Validate numeric threshold and ranges
     try:
         threshold_val = float(data["threshold"])
-        if not math.isfinite(threshold_val):
+        if not math.isfinite(threshold_val) or threshold_val < 0.0:
             raise ValueError()
     except (ValueError, TypeError):
-        raise PolicyValidationError("Threshold must be a finite numeric value")
+        raise PolicyValidationError("Threshold must be a non-negative finite numeric value")
+
+    if "percent" in metric and (threshold_val < 0.0 or threshold_val > 100.0):
+        raise PolicyValidationError("Percentage metric threshold must be between 0.0 and 100.0")
 
     try:
         priority_val = int(data["priority"])
@@ -114,6 +146,13 @@ def _policy_input(data: Dict[str, Any], policy_id: str | None = None) -> Dict[st
         delta_val = int(data["replica_delta"])
     except (ValueError, TypeError):
         raise PolicyValidationError("replica_delta must be an integer")
+
+    if action == "SCALE_OUT" and delta_val <= 0:
+        raise PolicyValidationError(f"Policy '{p_id}': SCALE_OUT must have positive replica_delta (got {delta_val})")
+    if action == "SCALE_IN" and delta_val >= 0:
+        raise PolicyValidationError(f"Policy '{p_id}': SCALE_IN must have negative replica_delta (got {delta_val})")
+    if action == "HOLD" and delta_val != 0:
+        raise PolicyValidationError(f"Policy '{p_id}': HOLD must have replica_delta == 0 (got {delta_val})")
 
     try:
         duration_val = float(data.get("duration_seconds", 0))
@@ -129,25 +168,20 @@ def _policy_input(data: Dict[str, Any], policy_id: str | None = None) -> Dict[st
     except (ValueError, TypeError):
         raise PolicyValidationError("cooldown_seconds must be a non-negative number")
 
-    result = {
-        "id": policy_id or data.get("id"),
-        "name": str(data["name"]).strip(),
+    return {
+        "id": p_id,
+        "name": name,
         "description": str(data.get("description", "")).strip(),
         "enabled": data.get("enabled", True),
         "priority": priority_val,
-        "metric": str(data["metric"]).strip(),
-        "operator": str(op).strip(),
+        "metric": metric,
+        "operator": op_clean,
         "threshold": threshold_val,
         "duration_seconds": duration_val,
-        "action": str(data["action"]).strip(),
+        "action": action,
         "replica_delta": delta_val,
         "cooldown_seconds": cooldown_val,
     }
-    if not result["id"]:
-        raise PolicyValidationError("Policy 'id' is required")
-    if not result["name"]:
-        raise PolicyValidationError("Policy 'name' is required")
-    return result
 
 
 @app.route("/")
@@ -370,17 +404,24 @@ def readyz():
 @app.route("/api/metrics", methods=["GET"])
 def get_metrics():
     """Returns currently collected and validated telemetry."""
-    # Read latest or fetch
-    metrics = controller.latest_telemetry
-    if not metrics:
-        metrics = controller.fetch_current_telemetry()
-        controller.latest_telemetry = metrics
-
     now = time.time()
     prom_connected, prom_msg = controller.prometheus_provider.check_connection()
     prom_targets = controller.prometheus_provider.get_targets_status() if prom_connected else {
         "reachable": False, "total_targets": 0, "healthy_targets": 0, "targets": []
     }
+
+    # Fetch live telemetry when connected to Prometheus and not in simulation mode
+    if not controller.config.simulation_mode:
+        if prom_connected:
+            metrics = controller.fetch_current_telemetry()
+            controller.latest_telemetry = metrics
+        else:
+            metrics = controller.latest_telemetry or controller.fetch_current_telemetry()
+    else:
+        metrics = controller.latest_telemetry
+        if not metrics:
+            metrics = controller.fetch_current_telemetry()
+            controller.latest_telemetry = metrics
 
     metrics_payload = {}
     for name, sample in metrics.items():
@@ -474,65 +515,79 @@ def get_policies():
 def create_policy():
     """Create and validate a policy using the existing YAML persistence mechanism."""
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"error": "Request body must be a valid JSON object"}), 400
         policy = _policy_input(data)
         document = _load_policy_document()
-        if any(item.get("id") == policy["id"] for item in document["policies"]):
+        if any(item.get("id") == policy["id"] for item in document.get("policies", [])):
             return jsonify({"error": f"Policy '{policy['id']}' already exists"}), 409
         document["policies"].append(policy)
         _persist_policy_document(document)
-        saved = next(rule.to_dict() for rule in controller.policy_engine.rules if rule.id == policy["id"])
+        saved = next((rule.to_dict() for rule in controller.policy_engine.rules if rule.id == policy["id"]), policy)
         return jsonify({"success": True, "policy": saved}), 201
     except PolicyValidationError as exc:
         return jsonify({"error": str(exc)}), 400
     except (OSError, yaml.YAMLError) as exc:
         logger.exception("Policy create failed")
         return jsonify({"error": f"Failed to persist policy: {exc}"}), 500
+    except Exception as exc:
+        logger.exception("Unexpected error in create_policy")
+        return jsonify({"error": f"Internal server error: {exc}"}), 500
 
 
 @app.route("/api/policies/<policy_id>", methods=["PUT"])
 def update_policy(policy_id: str):
     """Validate and replace one policy while preserving all other YAML configuration."""
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"error": "Request body must be a valid JSON object"}), 400
         document = _load_policy_document()
-        index = next((i for i, item in enumerate(document["policies"])
+        index = next((i for i, item in enumerate(document.get("policies", []))
                       if item.get("id") == policy_id), None)
         if index is None:
             return jsonify({"error": f"Policy '{policy_id}' not found"}), 404
-        document["policies"][index] = _policy_input(data, policy_id=policy_id)
+        updated_policy = _policy_input(data, policy_id=policy_id)
+        document["policies"][index] = updated_policy
         _persist_policy_document(document)
-        saved = next(rule.to_dict() for rule in controller.policy_engine.rules if rule.id == policy_id)
-        return jsonify({"success": True, "policy": saved})
+        saved = next((rule.to_dict() for rule in controller.policy_engine.rules if rule.id == policy_id), updated_policy)
+        return jsonify({"success": True, "policy": saved}), 200
     except PolicyValidationError as exc:
         return jsonify({"error": str(exc)}), 400
     except (OSError, yaml.YAMLError) as exc:
         logger.exception("Policy update failed")
         return jsonify({"error": f"Failed to persist policy: {exc}"}), 500
+    except Exception as exc:
+        logger.exception("Unexpected error in update_policy")
+        return jsonify({"error": f"Internal server error: {exc}"}), 500
 
 
 @app.route("/api/policies/<policy_id>/enabled", methods=["PATCH"])
 def set_policy_enabled(policy_id: str):
     """Enable or disable a policy and confirm the reloaded configuration."""
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True)
         if not isinstance(data, dict):
-            return jsonify({"error": "Request body must be a JSON object"}), 400
+            return jsonify({"error": "Request body must be a valid JSON object"}), 400
         if not isinstance(data.get("enabled"), bool):
             return jsonify({"error": "'enabled' must be a boolean"}), 400
         document = _load_policy_document()
-        policy = next((item for item in document["policies"] if item.get("id") == policy_id), None)
+        policy = next((item for item in document.get("policies", []) if item.get("id") == policy_id), None)
         if policy is None:
             return jsonify({"error": f"Policy '{policy_id}' not found"}), 404
         policy["enabled"] = data["enabled"]
         _persist_policy_document(document)
-        saved = next(rule.to_dict() for rule in controller.policy_engine.rules if rule.id == policy_id)
-        return jsonify({"success": True, "policy": saved})
+        saved = next((rule.to_dict() for rule in controller.policy_engine.rules if rule.id == policy_id), policy)
+        return jsonify({"success": True, "policy": saved}), 200
     except PolicyValidationError as exc:
         return jsonify({"error": str(exc)}), 400
     except (OSError, yaml.YAMLError) as exc:
         logger.exception("Policy enablement update failed")
         return jsonify({"error": f"Failed to persist policy: {exc}"}), 500
+    except Exception as exc:
+        logger.exception("Unexpected error in set_policy_enabled")
+        return jsonify({"error": f"Internal server error: {exc}"}), 500
 
 
 @app.route("/api/policies/update-threshold", methods=["POST"])
@@ -681,6 +736,21 @@ def reset_cooldown():
         "success": True,
         "message": "Cooldown timer reset successfully.",
     })
+
+
+@app.errorhandler(400)
+@app.errorhandler(404)
+@app.errorhandler(405)
+@app.errorhandler(500)
+def handle_api_errors(e):
+    """Ensure all /api/ requests receive structured JSON errors instead of HTML pages."""
+    if request.path.startswith("/api/"):
+        status_code = getattr(e, "code", 500)
+        description = getattr(e, "description", str(e))
+        return jsonify({"error": description, "status": status_code}), status_code
+    if getattr(e, "code", 500) == 404:
+        return render_template("404.html", page_title="Not Found"), 404
+    return e
 
 
 if __name__ == "__main__":

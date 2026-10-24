@@ -246,6 +246,91 @@ def test_policy_enabled_rejects_non_boolean(client):
     assert "enabled" in response.get_json()["error"]
 
 
+def test_policy_create_duplicate_id_returns_409(client):
+    """Attempting to create a policy with an existing ID must return 409 Conflict with JSON error."""
+    payload = {
+        "id": "CPU_HIGH_LOAD",  # Already exists in default config
+        "name": "Duplicate High Load",
+        "metric": "cpu_utilization_percent",
+        "operator": ">",
+        "threshold": 80.0,
+        "priority": 50,
+        "action": "SCALE_OUT",
+        "replica_delta": 1,
+        "enabled": True,
+    }
+    response = client.post("/api/policies", json=payload)
+    assert response.status_code == 409
+    assert response.headers.get("Content-Type", "").startswith("application/json")
+    data = response.get_json()
+    assert "already exists" in data["error"]
+
+
+def test_policy_create_invalid_fields_validation(client):
+    """Verifies strict field validation on policy creation."""
+    # 1. Invalid ID with spaces
+    r1 = client.post("/api/policies", json={
+        "id": "INVALID ID WITH SPACES",
+        "name": "Invalid ID",
+        "metric": "cpu_utilization_percent",
+        "operator": ">",
+        "threshold": 50,
+        "priority": 10,
+        "action": "SCALE_OUT",
+        "replica_delta": 1,
+    })
+    assert r1.status_code == 400
+    assert "id" in r1.get_json()["error"].lower()
+
+    # 2. SCALE_OUT with negative delta
+    r2 = client.post("/api/policies", json={
+        "id": "SCALE_OUT_NEGATIVE",
+        "name": "Bad delta",
+        "metric": "cpu_utilization_percent",
+        "operator": ">",
+        "threshold": 50,
+        "priority": 10,
+        "action": "SCALE_OUT",
+        "replica_delta": -1,
+    })
+    assert r2.status_code == 400
+    assert "positive" in r2.get_json()["error"].lower()
+
+    # 3. Percentage threshold > 100
+    r3 = client.post("/api/policies", json={
+        "id": "PERCENT_TOO_HIGH",
+        "name": "High threshold",
+        "metric": "cpu_utilization_percent",
+        "operator": ">",
+        "threshold": 150.0,
+        "priority": 10,
+        "action": "SCALE_OUT",
+        "replica_delta": 1,
+    })
+    assert r3.status_code == 400
+    assert "between 0.0 and 100.0" in r3.get_json()["error"]
+
+
+def test_api_error_handlers_always_return_json(client):
+    """Ensures /api/ endpoints always return JSON, never HTML, even on 404 or 405."""
+    # 404 on API route
+    res404 = client.get("/api/non-existent-endpoint")
+    assert res404.status_code == 404
+    assert res404.headers.get("Content-Type", "").startswith("application/json")
+    assert "error" in res404.get_json()
+
+    # 405 on API route (DELETE on /api/policies)
+    res405 = client.delete("/api/policies")
+    assert res405.status_code == 405
+    assert res405.headers.get("Content-Type", "").startswith("application/json")
+    assert "error" in res405.get_json()
+
+    # Regular page routes still return HTML
+    page404 = client.get("/non-existent-page")
+    assert page404.status_code == 404
+    assert "text/html" in page404.headers.get("Content-Type", "")
+
+
 def test_manual_scale_rejects_bad_payload(client):
     response = client.post("/api/workloads/scale", json={"target_replicas": "3"})
     assert response.status_code == 400

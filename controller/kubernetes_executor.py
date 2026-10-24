@@ -126,12 +126,15 @@ class KubernetesExecutor:
             logger.warning("Failed to initialize Kubernetes API client: %s", self._connection_error)
 
     def is_connected(self) -> Tuple[bool, str]:
-        """Returns connection status and description."""
-        if not self._connected or not self._apps_v1_api:
+        """Returns connection status and description with auto-recovery."""
+        if not K8S_CLIENT_AVAILABLE:
+            return False, "kubernetes Python package is not installed."
+
+        if self._apps_v1_api is None:
+            self._initialize_client()
             if self._apps_v1_api is None:
-                self._initialize_client()
-            if not self._connected or not self._apps_v1_api:
                 return False, self._connection_error or "Kubernetes client not connected."
+
         try:
             # Perform a lightweight fast check with short timeout
             self._apps_v1_api.get_api_resources(_request_timeout=2.0)
@@ -139,6 +142,17 @@ class KubernetesExecutor:
             self._connection_error = None
             return True, "Kubernetes API reachable."
         except Exception as e:
+            # Attempt to re-initialize once in case kubeconfig server port was updated (e.g. Minikube restart)
+            try:
+                self._initialize_client()
+                if self._apps_v1_api:
+                    self._apps_v1_api.get_api_resources(_request_timeout=2.0)
+                    self._connected = True
+                    self._connection_error = None
+                    return True, "Kubernetes API reachable."
+            except Exception:
+                pass
+
             self._connected = False
             self._connection_error = f"Kubernetes cluster unreachable ({str(e)[:80]}...)"
             return False, self._connection_error
