@@ -28,7 +28,7 @@ class ControllerConfig:
     # Operational safety controls & guardrails
     dry_run: bool = os.getenv("DRY_RUN", "true").lower() in ("true", "1", "yes")
     enable_live_execution: bool = os.getenv("ENABLE_LIVE_EXECUTION", "false").lower() in ("true", "1", "yes")
-    min_replicas: int = int(os.getenv("MIN_REPLICAS", "1"))
+    min_replicas: int = int(os.getenv("MIN_REPLICAS", "2"))
     max_replicas: int = int(os.getenv("MAX_REPLICAS", "10"))
     max_scale_step_up: int = int(os.getenv("MAX_SCALE_STEP_UP", "2"))
     max_scale_step_down: int = int(os.getenv("MAX_SCALE_STEP_DOWN", "1"))

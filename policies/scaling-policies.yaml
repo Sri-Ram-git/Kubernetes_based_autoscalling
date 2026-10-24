@@ -4,7 +4,7 @@ target_workload:
   kind: Deployment
   name: sample-web-app
 guardrails:
-  min_replicas: 1
+  min_replicas: 2
   max_replicas: 10
   max_scale_step_up: 2
   max_scale_step_down: 1
