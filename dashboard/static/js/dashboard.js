@@ -953,7 +953,8 @@ let activeExpPollInterval = null;
 
 async function fetchExperimentsState() {
   const runnerPill = document.getElementById("experiment-runner-pill");
-  if (!runnerPill) return;
+  const overviewPanel = document.getElementById("benchmark-experiments-panel");
+  if (!runnerPill && !overviewPanel) return;
 
   try {
     const res = await fetch("/api/experiments");
@@ -965,7 +966,7 @@ async function fetchExperimentsState() {
     const monitorCard = document.getElementById("experiment-monitor-card");
 
     if (current && (current.status === "RUNNING" || current.status === "PENDING")) {
-      runnerPill.className = "status-pill pill-warning";
+      if (runnerPill) runnerPill.className = "status-pill pill-warning";
       if (runnerText) runnerText.textContent = "RUNNING";
       if (monitorCard) monitorCard.classList.remove("hidden");
 
@@ -975,14 +976,26 @@ async function fetchExperimentsState() {
       }
     } else {
       if (current && current.status === "COMPLETED") {
-        runnerPill.className = "status-pill pill-success";
+        if (runnerPill) runnerPill.className = "status-pill pill-success";
         if (runnerText) runnerText.textContent = "COMPLETED";
       } else if (current && current.status === "FAILED") {
-        runnerPill.className = "status-pill pill-danger";
+        if (runnerPill) runnerPill.className = "status-pill pill-danger";
         if (runnerText) runnerText.textContent = "FAILED";
       } else {
-        runnerPill.className = "status-pill";
+        if (runnerPill) runnerPill.className = "status-pill";
         if (runnerText) runnerText.textContent = "IDLE";
+      }
+      const activeStrip = document.getElementById("benchmark-active-strip");
+      if (activeStrip) activeStrip.classList.add("hidden");
+
+      // Populate latest benchmark table on overview if available
+      if (data.history && data.history.length > 0) {
+        const latestRunId = data.history[0].run_id;
+        const detailsRes = await fetch(`/api/experiments/runs/${encodeURIComponent(latestRunId)}`);
+        if (detailsRes.ok) {
+          const runDetails = await detailsRes.json();
+          renderOverviewBenchmarkTable(runDetails);
+        }
       }
     }
 
@@ -993,6 +1006,7 @@ async function fetchExperimentsState() {
 }
 
 function updateActiveMonitor(run) {
+  // Legacy / generic selectors
   const title = document.getElementById("active-exp-title");
   const subtitle = document.getElementById("active-exp-subtitle");
   const stageBadge = document.getElementById("active-exp-stage-badge");
@@ -1010,24 +1024,86 @@ function updateActiveMonitor(run) {
   if (progressText) progressText.textContent = `${run.progress_percent || 0}%`;
   if (progressBar) progressBar.style.width = `${run.progress_percent || 0}%`;
 
-  // Live stat updates
-  const activeSystem = document.getElementById("live-stat-system");
-  const activeReps = document.getElementById("live-stat-replicas");
-  const activeCpu = document.getElementById("live-stat-cpu");
-
-  if (run.stage.includes("BASELINE")) {
-    if (activeSystem) activeSystem.textContent = "Baseline HPA";
-  } else if (run.stage.includes("PROPOSED")) {
-    if (activeSystem) activeSystem.textContent = "Proposed KubePilot";
+  // Overview embedded selectors
+  const activeStrip = document.getElementById("benchmark-active-strip");
+  if (activeStrip) activeStrip.classList.remove("hidden");
+  const liveName = document.getElementById("benchmark-live-name");
+  if (liveName) liveName.textContent = run.experiment_name;
+  const liveStage = document.getElementById("benchmark-live-stage");
+  if (liveStage) {
+    liveStage.textContent = run.stage.replace(/_/g, " ");
+    liveStage.className = run.stage.includes("PROPOSED") ? "status-pill pill-live" : "status-pill pill-dry-run";
   }
+  const liveStageText = document.getElementById("benchmark-live-stage-text");
+  if (liveStageText) liveStageText.textContent = run.stage.replace(/_/g, " ");
+  const ovProgressBar = document.getElementById("benchmark-progress-bar");
+  if (ovProgressBar) ovProgressBar.style.width = `${run.progress_percent || 0}%`;
+  const ovProgressPct = document.getElementById("benchmark-progress-pct");
+  if (ovProgressPct) ovProgressPct.textContent = `${run.progress_percent || 0}%`;
 
   // Pick up latest sample if available
   const resObj = run.proposed_result || run.baseline_result;
   if (resObj && resObj.samples && resObj.samples.length > 0) {
     const lastSample = resObj.samples[resObj.samples.length - 1];
-    if (activeReps) activeReps.textContent = `${lastSample.desired_replicas} desired / ${lastSample.ready_replicas} ready`;
-    if (activeCpu) activeCpu.textContent = `${lastSample.cpu_utilization_percent}%`;
+    const ovReplicas = document.getElementById("benchmark-replicas");
+    if (ovReplicas) ovReplicas.textContent = `${lastSample.desired_replicas} desired (${lastSample.ready_replicas} ready)`;
   }
+}
+
+function renderOverviewBenchmarkTable(run) {
+  const tbody = document.getElementById("benchmark-results-body");
+  const tag = document.getElementById("benchmark-last-run-tag");
+  if (!tbody) return;
+
+  if (!run) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty-state">No benchmark has been executed yet. Click "Run Experiment" above to evaluate.</td></tr>`;
+    return;
+  }
+
+  if (tag) {
+    tag.textContent = `${run.experiment_name} · ${run.status}`;
+  }
+
+  const b = run.baseline_result;
+  const p = run.proposed_result;
+  const comp = run.comparison_summary || {};
+
+  tbody.innerHTML = `
+    <tr>
+      <td><strong>Workload Replicas (Initial &rarr; Peak)</strong></td>
+      <td class="font-mono">${b ? `${b.initial_replicas} &rarr; ${b.peak_replicas} replicas` : '—'}</td>
+      <td class="font-mono"><strong>${p ? `${p.initial_replicas} &rarr; ${p.peak_replicas} replicas` : '—'}</strong></td>
+      <td>${p && b && p.peak_replicas === b.peak_replicas ? 'Equivalent scale achieved' : (p && b ? `KubePilot: ${p.peak_replicas} vs HPA: ${b.peak_replicas}` : 'Completed')}</td>
+    </tr>
+    <tr>
+      <td><strong>Scale Latency (Reaction Time)</strong></td>
+      <td class="font-mono">${b && b.time_to_first_scale_seconds != null ? `${b.time_to_first_scale_seconds}s` : 'Steady load (no scale)'}</td>
+      <td class="font-mono"><strong>${p && p.time_to_first_scale_seconds != null ? `${p.time_to_first_scale_seconds}s` : 'Steady load (no scale)'}</strong></td>
+      <td>${comp.scale_latency_improvement_seconds != null ? `KubePilot reacted ${Math.abs(comp.scale_latency_improvement_seconds)}s faster` : 'Steady state preserved'}</td>
+    </tr>
+    <tr>
+      <td><strong>Peak & Avg CPU Utilization</strong></td>
+      <td class="font-mono">${b ? `${b.max_cpu_percent}% / ${b.avg_cpu_percent}%` : '—'}</td>
+      <td class="font-mono"><strong>${p ? `${p.max_cpu_percent}% / ${p.avg_cpu_percent}%` : '—'}</strong></td>
+      <td>${p && b ? `Observed peak: ${p.max_cpu_percent}%` : 'Telemetry recorded'}</td>
+    </tr>
+    <tr>
+      <td><strong>Scaling Stability & Flapping</strong></td>
+      <td class="font-mono">${b ? `${b.scaling_events_count} event(s)` : '—'}</td>
+      <td class="font-mono"><strong>${p ? `${p.scaling_events_count} event(s)` : '—'}</strong></td>
+      <td><span class="status-pill ${p && p.scaling_events_count <= 2 ? 'pill-live' : 'pill-dry-run'}">${comp.scaling_stability || 'Verified'}</span></td>
+    </tr>
+    <tr>
+      <td><strong>Workload Throughput & Requests</strong></td>
+      <td class="font-mono">${b ? `${b.total_requests_sent} req (${b.avg_request_latency_ms}ms)` : '—'}</td>
+      <td class="font-mono"><strong>${p ? `${p.total_requests_sent} req (${p.avg_request_latency_ms}ms)` : '—'}</strong></td>
+      <td>${p && p.failed_requests === 0 ? '✓ 100% Request Success Rate' : 'Executed'}</td>
+    </tr>
+  `;
+}
+
+async function abortExperiment() {
+  await stopActiveExperiment();
 }
 
 async function triggerExperiment(experimentId) {

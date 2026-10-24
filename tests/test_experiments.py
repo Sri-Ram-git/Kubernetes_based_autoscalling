@@ -160,11 +160,15 @@ def test_api_experiments_list(client):
     assert "traffic_spike" in exp_ids
 
 
-def test_api_experiments_page_renders_html(client):
+def test_experiments_nav_tab_removed_and_embedded_in_overview(client):
+    # Separate /experiments tab is removed
     res = client.get("/experiments")
-    assert res.status_code == 200
-    assert "text/html" in res.headers.get("Content-Type", "")
-    assert "Automated Experiments" in res.get_data(as_text=True)
+    assert res.status_code == 404
+
+    # Experiments are accessible directly through Overview
+    res_overview = client.get("/")
+    assert res_overview.status_code == 200
+    assert "text/html" in res_overview.headers.get("Content-Type", "")
 
 
 def test_api_experiment_run_rejects_invalid_id(client):

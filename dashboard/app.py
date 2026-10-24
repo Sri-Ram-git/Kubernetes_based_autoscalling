@@ -216,11 +216,6 @@ def history_page():
     return render_template("history.html", current_page="history", page_title="Execution history")
 
 
-@app.route("/experiments")
-def experiments_page():
-    return render_template("experiments.html", current_page="experiments", page_title="Experiments")
-
-
 @app.route("/system-health")
 def system_health_page():
     return render_template("system_health.html", current_page="system-health", page_title="System health")
@@ -230,7 +225,11 @@ def system_health_page():
 def not_found(error):
     if request.path.startswith("/api/"):
         return jsonify({"error": "Not found"}), 404
-    return render_template("404.html", current_page="", page_title="Page not found"), 404
+    try:
+        return render_template("404.html", current_page="", page_title="Page not found"), 404
+    except Exception as e:
+        logger.exception("Error rendering 404.html: %s", e)
+        return "Page not found", 404
 
 
 # ==============================================================================

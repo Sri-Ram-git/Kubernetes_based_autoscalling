@@ -119,6 +119,10 @@ class PolicyEngine:
         if policy_file_path:
             self.load_from_yaml(policy_file_path)
 
+    def reset(self) -> None:
+        """Clears all condition breach persistence timestamps."""
+        self._breach_timestamps.clear()
+
     def load_from_yaml(self, file_path: str) -> None:
         """Loads and strictly validates policies from a YAML file."""
         p = Path(file_path)
