@@ -160,15 +160,16 @@ def test_api_experiments_list(client):
     assert "traffic_spike" in exp_ids
 
 
-def test_experiments_nav_tab_removed_and_embedded_in_overview(client):
+def test_experiments_nav_tab_and_overview_clean(client):
     # Separate /experiments tab is removed
     res = client.get("/experiments")
     assert res.status_code == 404
 
-    # Experiments are accessible directly through Overview
+    # Overview page is clean without Benchmark Experiments section
     res_overview = client.get("/")
     assert res_overview.status_code == 200
     assert "text/html" in res_overview.headers.get("Content-Type", "")
+    assert "Benchmark Experiments" not in res_overview.get_data(as_text=True)
 
 
 def test_api_experiment_run_rejects_invalid_id(client):
