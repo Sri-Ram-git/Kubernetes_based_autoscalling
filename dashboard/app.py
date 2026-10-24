@@ -216,6 +216,11 @@ def history_page():
     return render_template("history.html", current_page="history", page_title="Execution history")
 
 
+@app.route("/experiments")
+def experiments_page():
+    return render_template("experiments.html", current_page="experiments", page_title="Experiments")
+
+
 @app.route("/system-health")
 def system_health_page():
     return render_template("system_health.html", current_page="system-health", page_title="System health")
@@ -736,6 +741,65 @@ def reset_cooldown():
         "success": True,
         "message": "Cooldown timer reset successfully.",
     })
+
+
+# ==============================================================================
+# Automated Experimentation Endpoints (Project 357)
+# ==============================================================================
+
+@app.route("/api/experiments", methods=["GET"])
+def get_experiments():
+    """Lists available experiments, active execution state, and historical runs."""
+    current = controller.experiment_manager.current_run
+    return jsonify({
+        "experiments": controller.experiment_manager.list_experiments(),
+        "current_run": current.to_dict() if current else None,
+        "history": controller.experiment_manager.get_run_history(),
+    })
+
+
+@app.route("/api/experiments/<experiment_id>/run", methods=["POST"])
+def run_experiment_endpoint(experiment_id: str):
+    """Triggers execution of an automated experiment."""
+    data = request.get_json(silent=True) or {}
+    mode = data.get("mode", "both")
+    ok, msg, run_id = controller.experiment_manager.start_experiment(experiment_id, mode=mode)
+    status_code = 200 if ok else 409
+    return jsonify({
+        "success": ok,
+        "message": msg,
+        "run_id": run_id,
+        "experiment_id": experiment_id,
+    }), status_code
+
+
+@app.route("/api/experiments/<experiment_id>/status", methods=["GET"])
+def get_experiment_status_endpoint(experiment_id: str):
+    """Returns real-time progress and live status of the active experiment."""
+    current = controller.experiment_manager.current_run
+    return jsonify({
+        "current_run": current.to_dict() if current else None,
+    })
+
+
+@app.route("/api/experiments/runs/<run_id>", methods=["GET"])
+def get_experiment_run_details(run_id: str):
+    """Retrieves full time-series observations and comparative summary of a finished run."""
+    details = controller.experiment_manager.get_run_details(run_id)
+    if not details:
+        return jsonify({"error": f"Experiment run '{run_id}' not found"}), 404
+    return jsonify(details)
+
+
+@app.route("/api/experiments/stop", methods=["POST"])
+def stop_experiment_endpoint():
+    """Aborts the currently executing experiment safely."""
+    ok, msg = controller.experiment_manager.stop_current_experiment()
+    status_code = 200 if ok else 400
+    return jsonify({
+        "success": ok,
+        "message": msg,
+    }), status_code
 
 
 @app.errorhandler(400)

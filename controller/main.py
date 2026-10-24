@@ -29,6 +29,7 @@ from controller.guardrails import GuardrailEngine, GuardrailResult
 from controller.kubernetes_executor import ExecutionResult, KubernetesExecutor, WorkloadState
 from controller.policy_engine import PolicyEngine
 from controller.strategy_coordinator import StrategyCoordinator
+from controller.experiment_runner import ExperimentManager
 from controller.telemetry import (
     MetricSample,
     PrometheusTelemetryProvider,
@@ -92,6 +93,7 @@ class AutoscalingController:
         self.latest_guardrail: Optional[GuardrailResult] = None
         self.latest_execution: Optional[ExecutionResult] = None
         self.latest_workload_state: Optional[WorkloadState] = None
+        self.experiment_manager = ExperimentManager(self)
 
     def set_live_execution(self, enabled: bool) -> None:
         """Enables or disables live execution safely."""

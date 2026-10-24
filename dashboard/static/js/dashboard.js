@@ -79,6 +79,7 @@ async function fetchAllData() {
       fetchDecisions(),
       fetchPolicies(),
       fetchHistory(),
+      fetchExperimentsState(),
     ]);
 
     // Update refresh timestamp
@@ -943,3 +944,298 @@ function escapeHtml(str) {
     '"': "&quot;",
   }[tag] || tag));
 }
+
+// ==============================================================================
+// Automated Experiments Manager (Project 357)
+// ==============================================================================
+
+let activeExpPollInterval = null;
+
+async function fetchExperimentsState() {
+  const runnerPill = document.getElementById("experiment-runner-pill");
+  if (!runnerPill) return;
+
+  try {
+    const res = await fetch("/api/experiments");
+    if (!res.ok) return;
+    const data = await res.json();
+    const current = data.current_run;
+
+    const runnerText = document.getElementById("experiment-runner-text");
+    const monitorCard = document.getElementById("experiment-monitor-card");
+
+    if (current && (current.status === "RUNNING" || current.status === "PENDING")) {
+      runnerPill.className = "status-pill pill-warning";
+      if (runnerText) runnerText.textContent = "RUNNING";
+      if (monitorCard) monitorCard.classList.remove("hidden");
+
+      updateActiveMonitor(current);
+      if (!activeExpPollInterval) {
+        activeExpPollInterval = setInterval(pollActiveExperiment, 1000);
+      }
+    } else {
+      if (current && current.status === "COMPLETED") {
+        runnerPill.className = "status-pill pill-success";
+        if (runnerText) runnerText.textContent = "COMPLETED";
+      } else if (current && current.status === "FAILED") {
+        runnerPill.className = "status-pill pill-danger";
+        if (runnerText) runnerText.textContent = "FAILED";
+      } else {
+        runnerPill.className = "status-pill";
+        if (runnerText) runnerText.textContent = "IDLE";
+      }
+    }
+
+    renderExperimentHistory(data.history || []);
+  } catch (e) {
+    console.error("fetchExperimentsState error:", e);
+  }
+}
+
+function updateActiveMonitor(run) {
+  const title = document.getElementById("active-exp-title");
+  const subtitle = document.getElementById("active-exp-subtitle");
+  const stageBadge = document.getElementById("active-exp-stage-badge");
+  const stageText = document.getElementById("active-exp-stage-text");
+  const progressText = document.getElementById("active-exp-progress-text");
+  const progressBar = document.getElementById("active-exp-progress-bar");
+
+  if (title) title.textContent = run.experiment_name;
+  if (subtitle) subtitle.textContent = `Run ID: ${run.run_id} · Started at: ${run.started_at ? run.started_at.split("T")[1].slice(0, 8) : "—"}`;
+  if (stageBadge) {
+    stageBadge.textContent = run.stage;
+    stageBadge.className = run.status === "FAILED" ? "badge badge-danger" : "badge badge-accent";
+  }
+  if (stageText) stageText.textContent = `Current Stage: ${run.stage.replace(/_/g, " ")}`;
+  if (progressText) progressText.textContent = `${run.progress_percent || 0}%`;
+  if (progressBar) progressBar.style.width = `${run.progress_percent || 0}%`;
+
+  // Live stat updates
+  const activeSystem = document.getElementById("live-stat-system");
+  const activeReps = document.getElementById("live-stat-replicas");
+  const activeCpu = document.getElementById("live-stat-cpu");
+
+  if (run.stage.includes("BASELINE")) {
+    if (activeSystem) activeSystem.textContent = "Baseline HPA";
+  } else if (run.stage.includes("PROPOSED")) {
+    if (activeSystem) activeSystem.textContent = "Proposed KubePilot";
+  }
+
+  // Pick up latest sample if available
+  const resObj = run.proposed_result || run.baseline_result;
+  if (resObj && resObj.samples && resObj.samples.length > 0) {
+    const lastSample = resObj.samples[resObj.samples.length - 1];
+    if (activeReps) activeReps.textContent = `${lastSample.desired_replicas} desired / ${lastSample.ready_replicas} ready`;
+    if (activeCpu) activeCpu.textContent = `${lastSample.cpu_utilization_percent}%`;
+  }
+}
+
+async function triggerExperiment(experimentId) {
+  const selectId = experimentId === "stable_workload" ? "mode-stable" : "mode-spike";
+  const btnId = experimentId === "stable_workload" ? "btn-run-stable" : "btn-run-spike";
+  const modeSelect = document.getElementById(selectId);
+  const mode = modeSelect ? modeSelect.value : "both";
+
+  const btn = document.getElementById(btnId);
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await fetch(`/api/experiments/${encodeURIComponent(experimentId)}/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      alert(`Could not start experiment: ${data.message || data.error || "Execution rejected"}`);
+      return;
+    }
+
+    // Show monitor card immediately
+    const monitorCard = document.getElementById("experiment-monitor-card");
+    if (monitorCard) monitorCard.classList.remove("hidden");
+
+    if (activeExpPollInterval) clearInterval(activeExpPollInterval);
+    activeExpPollInterval = setInterval(pollActiveExperiment, 1000);
+    await pollActiveExperiment();
+
+  } catch (e) {
+    alert("Network error starting experiment: " + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function pollActiveExperiment() {
+  try {
+    const res = await fetch("/api/experiments");
+    if (!res.ok) return;
+    const data = await res.json();
+    const current = data.current_run;
+
+    if (!current) {
+      if (activeExpPollInterval) {
+        clearInterval(activeExpPollInterval);
+        activeExpPollInterval = null;
+      }
+      return;
+    }
+
+    updateActiveMonitor(current);
+
+    if (current.status === "COMPLETED" || current.status === "FAILED" || current.status === "CANCELED") {
+      if (activeExpPollInterval) {
+        clearInterval(activeExpPollInterval);
+        activeExpPollInterval = null;
+      }
+
+      // Load full run details
+      if (current.run_id) {
+        await viewHistoricalRun(current.run_id);
+      }
+      renderExperimentHistory(data.history || []);
+    }
+  } catch (e) {
+    console.error("pollActiveExperiment error:", e);
+  }
+}
+
+async function stopActiveExperiment() {
+  if (!confirm("Are you sure you want to abort the currently running experiment?")) return;
+  try {
+    const res = await fetch("/api/experiments/stop", { method: "POST" });
+    const data = await res.json();
+    alert(data.message || "Experiment stopped.");
+    await pollActiveExperiment();
+  } catch (e) {
+    alert("Error stopping experiment: " + e.message);
+  }
+}
+
+async function viewHistoricalRun(runId) {
+  try {
+    const res = await fetch(`/api/experiments/runs/${encodeURIComponent(runId)}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    renderExperimentResults(data);
+  } catch (e) {
+    console.error("viewHistoricalRun error:", e);
+  }
+}
+
+function renderExperimentResults(run) {
+  const container = document.getElementById("experiment-results-container");
+  if (!container) return;
+  container.classList.remove("hidden");
+  container.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  const title = document.getElementById("res-title");
+  const subtitle = document.getElementById("res-subtitle");
+  const timestamp = document.getElementById("res-timestamp");
+  const badgeId = document.getElementById("res-badge-id");
+
+  if (title) title.textContent = `${run.experiment_name} — Results`;
+  if (subtitle) subtitle.textContent = `Run ID: ${run.run_id} · Status: ${run.status}`;
+  if (timestamp) timestamp.textContent = `Finished: ${run.finished_at ? run.finished_at.split("T")[1].slice(0, 8) : "—"}`;
+  if (badgeId) badgeId.textContent = run.status;
+
+  const tbodyComp = document.getElementById("res-comparison-tbody");
+  const b = run.baseline_result;
+  const p = run.proposed_result;
+  const comp = run.comparison_summary || {};
+
+  if (tbodyComp) {
+    tbodyComp.innerHTML = `
+      <tr>
+        <td><strong>Initial / Peak Replicas</strong></td>
+        <td class="font-mono">${b ? `${b.initial_replicas} &rarr; ${b.peak_replicas} replicas` : '—'}</td>
+        <td class="font-mono"><strong>${p ? `${p.initial_replicas} &rarr; ${p.peak_replicas} replicas` : '—'}</strong></td>
+        <td>${p && b && p.peak_replicas === b.peak_replicas ? 'Equivalent scale target achieved' : (p && b ? `KubePilot peaked at ${p.peak_replicas} vs HPA ${b.peak_replicas}` : 'Completed')}</td>
+      </tr>
+      <tr>
+        <td><strong>Time to Scale (Latency)</strong></td>
+        <td class="font-mono">${b && b.time_to_first_scale_seconds != null ? `${b.time_to_first_scale_seconds}s` : 'No scaling triggered'}</td>
+        <td class="font-mono"><strong>${p && p.time_to_first_scale_seconds != null ? `${p.time_to_first_scale_seconds}s` : 'No scaling triggered'}</strong></td>
+        <td>${comp.scale_latency_improvement_seconds != null ? `KubePilot reacted ${Math.abs(comp.scale_latency_improvement_seconds)}s ${comp.scale_latency_improvement_seconds > 0 ? 'faster' : 'slower'}` : 'Nominal load maintained'}</td>
+      </tr>
+      <tr>
+        <td><strong>Peak / Avg CPU Utilization</strong></td>
+        <td class="font-mono">${b ? `${b.max_cpu_percent}% / ${b.avg_cpu_percent}%` : '—'}</td>
+        <td class="font-mono"><strong>${p ? `${p.max_cpu_percent}% / ${p.avg_cpu_percent}%` : '—'}</strong></td>
+        <td>${p && b ? `CPU managed within safety bounds (${p.max_cpu_percent}% peak)` : 'Telemetry recorded'}</td>
+      </tr>
+      <tr>
+        <td><strong>Scaling Stability & Flapping</strong></td>
+        <td class="font-mono">${b ? `${b.scaling_events_count} mutation(s)` : '—'}</td>
+        <td class="font-mono"><strong>${p ? `${p.scaling_events_count} mutation(s)` : '—'}</strong></td>
+        <td><span class="badge ${p && p.scaling_events_count <= 2 ? 'badge-accent' : ''}">${comp.scaling_stability || 'Evaluated'}</span></td>
+      </tr>
+      <tr>
+        <td><strong>Total Requests & Avg Latency</strong></td>
+        <td class="font-mono">${b ? `${b.total_requests_sent} req (${b.avg_request_latency_ms}ms)` : '—'}</td>
+        <td class="font-mono"><strong>${p ? `${p.total_requests_sent} req (${p.avg_request_latency_ms}ms)` : '—'}</strong></td>
+        <td>${p && p.failed_requests === 0 ? '✓ 100% Request Success Rate' : `${p ? p.failed_requests : 0} errors`}</td>
+      </tr>
+    `;
+  }
+
+  // Populate time series observations table
+  const tbodyTs = document.getElementById("res-timeseries-tbody");
+  if (tbodyTs) {
+    const allSamples = [];
+    if (b && b.samples) {
+      b.samples.forEach(s => allSamples.push(s));
+    }
+    if (p && p.samples) {
+      p.samples.forEach(s => allSamples.push(s));
+    }
+
+    if (allSamples.length === 0) {
+      tbodyTs.innerHTML = `<tr><td colspan="8" class="empty-state">No time-series samples recorded for this run.</td></tr>`;
+    } else {
+      tbodyTs.innerHTML = allSamples.map(s => `
+        <tr>
+          <td class="font-mono">${s.elapsed_seconds}s</td>
+          <td><span class="badge ${s.system === 'proposed' ? 'badge-accent' : ''}">${s.system.toUpperCase()}</span></td>
+          <td class="font-mono">${s.cpu_utilization_percent}%</td>
+          <td class="font-mono">${s.memory_utilization_percent}%</td>
+          <td class="font-mono">${s.http_requests_per_second}</td>
+          <td class="font-mono"><strong>${s.desired_replicas}</strong> / ${s.ready_replicas}</td>
+          <td><span class="badge ${s.scaling_action === 'SCALE_OUT' ? 'badge-accent' : ''}">${s.scaling_action}</span></td>
+          <td class="font-mono"><small>${s.workload_latency_avg_ms}ms</small></td>
+        </tr>
+      `).join("");
+    }
+  }
+}
+
+function renderExperimentHistory(historyList) {
+  const tbody = document.getElementById("history-table-tbody");
+  if (!tbody) return;
+
+  if (!historyList || historyList.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-state">No experiments executed yet. Choose an experiment above to run.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = historyList.map(h => {
+    const comp = h.comparison_summary || {};
+    const bPeak = comp.baseline_peak_replicas != null ? comp.baseline_peak_replicas : '—';
+    const pPeak = comp.proposed_peak_replicas != null ? comp.proposed_peak_replicas : '—';
+    const isSuccess = h.status === "COMPLETED";
+
+    return `
+      <tr>
+        <td class="font-mono"><small>${escapeHtml(h.run_id)}</small></td>
+        <td><strong>${escapeHtml(h.experiment_name)}</strong></td>
+        <td><small>${h.started_at ? h.started_at.replace("T", " ").slice(0, 19) : "—"}</small></td>
+        <td><span class="status-pill ${isSuccess ? 'pill-success' : (h.status === 'RUNNING' ? 'pill-warning' : 'pill-danger')}">${escapeHtml(h.status)}</span></td>
+        <td class="font-mono">${bPeak} / <strong>${pPeak}</strong></td>
+        <td><small>${escapeHtml(comp.scaling_stability || h.status)}</small></td>
+        <td><button class="btn btn-secondary" onclick="viewHistoricalRun('${escapeHtml(h.run_id)}')" style="font-size:10px; padding:3px 7px;">View Details</button></td>
+      </tr>
+    `;
+  }).join("");
+}
+
