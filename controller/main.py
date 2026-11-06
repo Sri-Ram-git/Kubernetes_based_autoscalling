@@ -32,6 +32,7 @@ from controller.strategy_coordinator import StrategyCoordinator
 from controller.experiment_runner import ExperimentManager
 from controller.telemetry import (
     MetricSample,
+    MetricStatus,
     PrometheusTelemetryProvider,
     SimulatedTelemetryProvider,
     build_metric_queries,
@@ -95,6 +96,15 @@ class AutoscalingController:
         self.latest_workload_state: Optional[WorkloadState] = None
         self.experiment_manager = ExperimentManager(self)
 
+        # Track policy file modification time for dynamic reloads
+        self._last_policies_mtime: float = 0.0
+        try:
+            p_init = Path(self.config.policies_path)
+            if p_init.exists():
+                self._last_policies_mtime = p_init.stat().st_mtime
+        except Exception:
+            pass
+
     def set_live_execution(self, enabled: bool) -> None:
         """Enables or disables live execution safely."""
         self.config.enable_live_execution = enabled
@@ -142,19 +152,56 @@ class AutoscalingController:
 
         return metrics
 
-    def run_single_cycle(self, now: Optional[float] = None) -> Dict[str, Any]:
+    def run_single_cycle(self, now: Optional[float] = None, forced_metrics: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Executes one full iteration of the auto-scaling pipeline.
         Thread-safe; can be called on schedule or triggered by dashboard.
+        Supports optional forced_metrics injection for controlled live evaluation scenarios.
         """
         with self._cycle_lock:
+            # Check for policy updates on disk (e.g. edited via dashboard or PVC)
+            try:
+                p_check = Path(self.config.policies_path)
+                if p_check.exists():
+                    current_mtime = p_check.stat().st_mtime
+                    if current_mtime > self._last_policies_mtime:
+                        if self._last_policies_mtime > 0.0:
+                            logger.info("Policies file modified on disk (%s). Reloading active policies.", p_check)
+                            self.reload_policies()
+                        self._last_policies_mtime = current_mtime
+            except Exception as e:
+                logger.debug("Policy mtime check skipped: %s", e)
+
             # 1. Read current workload state from Kubernetes
             workload_state = self.executor.get_workload_state()
             self.latest_workload_state = workload_state
             current_replicas = workload_state.desired_replicas
 
             # 2. Collect & validate telemetry
-            metrics = self.fetch_current_telemetry()
+            if forced_metrics is not None:
+                metrics = {}
+                cycle_time = now or time.time()
+                for m_name, m_val in forced_metrics.items():
+                    if isinstance(m_val, MetricSample):
+                        metrics[m_name] = m_val
+                    elif isinstance(m_val, dict):
+                        metrics[m_name] = MetricSample(
+                            metric_name=m_name,
+                            value=m_val.get("value"),
+                            timestamp=cycle_time,
+                            status=MetricStatus(m_val.get("status", "VALID")),
+                            source=m_val.get("source", "forced"),
+                        )
+                    else:
+                        metrics[m_name] = MetricSample(
+                            metric_name=m_name,
+                            value=float(m_val),
+                            timestamp=cycle_time,
+                            status=MetricStatus.VALID,
+                            source="forced",
+                        )
+            else:
+                metrics = self.fetch_current_telemetry()
             self.latest_telemetry = metrics
 
             # 3. Compute decision via PRAH

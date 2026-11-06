@@ -1,0 +1,2 @@
+timestamp,iso_timestamp,elapsed_seconds,scenario,trial_number,system,cpu_utilization_percent,raw_cpu_usage_cores,cpu_request_cores,cpu_limit_cores,hpa_utilization_percent,kubepilot_utilization_percent,memory_utilization_percent,http_requests_per_second,desired_replicas,current_replicas,ready_replicas,scaling_action,workload_rps_actual,workload_latency_avg_ms
+1793857499.6232197,2026-11-05T05:44:59.623220+00:00,10.72,E6_conflicting_policies,1,KubePilot,95.0,0.38,0.4,2.0,95.0,95.0,40.0,200.0,4,4,4,SCALE_OUT,200.0,28.0

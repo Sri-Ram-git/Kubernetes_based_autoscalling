@@ -10,17 +10,27 @@ metadata:
   name: autoscaling-controller-role
   namespace: autoscaling-demo
 rules:
-  # Deployment and scale subresource permissions
+  # Deployment read permissions (least privilege: read-only on deployment spec)
   - apiGroups: ["apps"]
-    resources: ["deployments", "deployments/scale"]
-    verbs: ["get", "list", "watch", "update", "patch"]
-  
-  # Pod inspection permissions
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch"]
+
+  # Deployment scale subresource permissions (for scaling operations)
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "update", "patch"]
+
+  # ReplicaSet read permissions (for deployment revision inspection)
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+
+  # Pod inspection permissions (for readiness and health tracking)
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
 
-  # HPA collision detection
+  # HPA collision detection (read-only)
   - apiGroups: ["autoscaling"]
     resources: ["horizontalpodautoscalers"]
     verbs: ["get", "list", "watch"]
@@ -37,4 +47,27 @@ subjects:
 roleRef:
   kind: Role
   name: autoscaling-controller-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: autoscaling-controller-node-reader
+rules:
+  # Node inspection permissions (cluster-scoped for capacity validation)
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: autoscaling-controller-node-reader-binding
+subjects:
+  - kind: ServiceAccount
+    name: autoscaling-controller-sa
+    namespace: autoscaling-demo
+roleRef:
+  kind: ClusterRole
+  name: autoscaling-controller-node-reader
   apiGroup: rbac.authorization.k8s.io

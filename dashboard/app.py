@@ -236,6 +236,15 @@ def not_found(error):
 # REST API Endpoints
 # ==============================================================================
 
+@app.route("/api/capacity", methods=["GET"])
+def get_capacity():
+    """Returns node allocatable capacity and scale-out scheduling assessment."""
+    delta = request.args.get("delta", 1, type=int)
+    validator = controller.executor.capacity_validator
+    report = validator.validate_scale_out(delta=delta)
+    return jsonify(report.to_dict())
+
+
 @app.route("/api/status", methods=["GET"])
 def get_status():
     """Returns overall framework and cluster connectivity status."""
@@ -285,6 +294,7 @@ def get_status():
             "max_scale_step_down": controller.config.max_scale_step_down,
             "cooldown_seconds": controller.config.cooldown_seconds,
         },
+        "capacity": controller.executor.capacity_validator.validate_scale_out(delta=1).to_dict(),
     })
 
 

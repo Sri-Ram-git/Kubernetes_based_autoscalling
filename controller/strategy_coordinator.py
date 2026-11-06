@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from controller.guardrails import GuardrailEngine, GuardrailResult
 from controller.kubernetes_executor import ExecutionResult, KubernetesExecutor
+from controller.capacity_validator import CapacityOutcome, CapacityValidator
 
 logger = logging.getLogger("autoscaler.strategy_coordinator")
 
@@ -32,10 +33,12 @@ class StrategyCoordinator:
         executor: KubernetesExecutor,
         guardrail_engine: GuardrailEngine,
         enforce_exclusive_ownership: bool = True,
+        capacity_validator: Optional[CapacityValidator] = None,
     ):
         self.executor = executor
         self.guardrail_engine = guardrail_engine
         self.enforce_exclusive_ownership = enforce_exclusive_ownership
+        self.capacity_validator = capacity_validator or getattr(executor, "capacity_validator", None)
         self._autoscaling_v2_api = None
 
         if AUTOSCALING_API_AVAILABLE and executor._connected and executor._apps_v1_api:
@@ -131,6 +134,45 @@ class StrategyCoordinator:
                 error=guardrail_result.rejection_reason,
             )
             return guardrail_result, exec_result
+
+        # Step 2.5: Pre-scaling capacity validation for approved scale-out actions
+        is_scale_out = (proposed_action == "SCALE_OUT" or guardrail_result.replica_delta > 0)
+        if (
+            is_scale_out
+            and guardrail_result.approved
+            and self.capacity_validator
+            and self.executor._connected
+        ):
+            cap_res = self.capacity_validator.validate_scale_out(delta=guardrail_result.replica_delta)
+            if not cap_res.is_sufficient and cap_res.outcome in (
+                CapacityOutcome.INSUFFICIENT_CPU,
+                CapacityOutcome.INSUFFICIENT_MEMORY,
+                CapacityOutcome.NO_ELIGIBLE_NODE,
+            ):
+                rejection_msg = f"Scale-out blocked by capacity guardrail: {cap_res.message} (Outcome: {cap_res.outcome.value})"
+                logger.warning(rejection_msg)
+                guardrail_res = GuardrailResult(
+                    approved=False,
+                    action="REJECTED",
+                    original_target_replicas=target_replicas,
+                    authorized_target_replicas=current_replicas,
+                    replica_delta=0,
+                    clamped=False,
+                    rejection_reason=rejection_msg,
+                    is_dry_run=guardrail_result.is_dry_run,
+                    authorization_note=rejection_msg,
+                )
+                exec_res = ExecutionResult(
+                    success=False,
+                    dry_run=guardrail_result.is_dry_run,
+                    initial_replicas=current_replicas,
+                    target_replicas=current_replicas,
+                    confirmed_replicas=current_replicas,
+                    action_type="HOLD",
+                    message=rejection_msg,
+                    error=cap_res.outcome.value,
+                )
+                return guardrail_res, exec_res
 
         # Step 3: Route approved action to Kubernetes executor
         exec_result = self.executor.execute_scaling(

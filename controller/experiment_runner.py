@@ -28,6 +28,7 @@ import requests
 logger = logging.getLogger("autoscaler.experiments")
 
 RESULTS_DIR = Path(__file__).resolve().parent.parent / "experiments" / "results"
+EVIDENCE_DIR = Path(__file__).resolve().parent.parent / "research" / "evidence"
 MANIFEST_PATH = Path(__file__).resolve().parent.parent / "k8s" / "baseline-hpa.yaml"
 
 
@@ -231,30 +232,7 @@ class WorkloadGenerator:
             while time.time() < spike_end and not self._stop_event.is_set():
                 req_start = time.time()
                 try:
-                    r = session.get(f"{self.target_url}/load?duration=3.5", timeout=5.0)
-                    lat = time.time() - req_start
-                    with self._lock:
-                        self.requests_sent += 1
-                        if r.status_code == 200:
-                            self.requests_success += 1
-                        else:
-                            self.requests_failed += 1
-                        self.total_latency_seconds += lat
-                except Exception:
-                    with self._lock:
-                        self.requests_sent += 1
-                        self.requests_failed += 1
-                time.sleep(0.02)
-
-        def _burst_worker():
-            # Rapid nominal query loop during spike to drive HTTP request rate
-            while time.time() < spike_start and not self._stop_event.is_set():
-                time.sleep(0.1)
-
-            while time.time() < spike_end and not self._stop_event.is_set():
-                req_start = time.time()
-                try:
-                    r = session.get(f"{self.target_url}/?format=json", timeout=1.0)
+                    r = session.get(f"{self.target_url}/load?duration=0.5", timeout=3.0)
                     lat = time.time() - req_start
                     with self._lock:
                         self.requests_sent += 1
@@ -268,6 +246,29 @@ class WorkloadGenerator:
                         self.requests_sent += 1
                         self.requests_failed += 1
                 time.sleep(0.01)
+
+        def _burst_worker():
+            # Rapid burst generation loop during spike to drive HTTP request rate
+            while time.time() < spike_start and not self._stop_event.is_set():
+                time.sleep(0.1)
+
+            while time.time() < spike_end and not self._stop_event.is_set():
+                req_start = time.time()
+                try:
+                    r = session.get(f"{self.target_url}/generate-traffic?count=25", timeout=2.0)
+                    lat = time.time() - req_start
+                    with self._lock:
+                        self.requests_sent += 25
+                        if r.status_code == 200:
+                            self.requests_success += 25
+                        else:
+                            self.requests_failed += 25
+                        self.total_latency_seconds += lat
+                except Exception:
+                    with self._lock:
+                        self.requests_sent += 25
+                        self.requests_failed += 25
+                time.sleep(0.05)
 
         # Start nominal worker
         t_nom = threading.Thread(target=_nominal_worker, daemon=True)
@@ -294,17 +295,17 @@ class ExperimentManager:
             "id": "stable_workload",
             "name": "Experiment 1: Stable Workload",
             "description": "Applies a steady, nominal request stream (10 req/s) against sample-web-app. Compares baseline Kubernetes HPA vs KubePilot PRAH framework stability under nominal demand.",
-            "duration_seconds": 20.0,
+            "duration_seconds": 25.0,
             "target_rps": 10,
         },
         "traffic_spike": {
             "id": "traffic_spike",
             "name": "Experiment 2: Sudden Traffic Spike",
             "description": "Applies a rapid traffic and computational surge to drive CPU >80%. Compares baseline HPA latency vs KubePilot PRAH priority arbitration, scale-out response, and cooldown recovery.",
-            "duration_seconds": 35.0,
-            "baseline_seconds": 2.0,
-            "spike_seconds": 22.0,
-            "concurrency": 12,
+            "duration_seconds": 45.0,
+            "baseline_seconds": 3.0,
+            "spike_seconds": 28.0,
+            "concurrency": 8,
         },
     }
 
@@ -823,6 +824,31 @@ class ExperimentManager:
                 writer.writerows(all_samples)
 
         logger.info("Saved experiment run %s to %s and %s", run.run_id, json_file, csv_file)
+
+        # Mirror results directly to research evidence package
+        try:
+            EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
+            ev_json = EVIDENCE_DIR / f"{run.run_id}.json"
+            with open(ev_json, "w", encoding="utf-8") as f:
+                json.dump(run_dict, f, indent=2)
+
+            if all_samples:
+                ev_csv = EVIDENCE_DIR / f"{run.run_id}.csv"
+                with open(ev_csv, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerows(all_samples)
+
+            # Also maintain symlink/latest pointer for reproducibility scripts
+            with open(EVIDENCE_DIR / f"{run.experiment_id}_latest.json", "w", encoding="utf-8") as f:
+                json.dump(run_dict, f, indent=2)
+            if all_samples:
+                with open(EVIDENCE_DIR / f"{run.experiment_id}_latest.csv", "w", newline="", encoding="utf-8") as f:
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerows(all_samples)
+        except Exception as e:
+            logger.warning("Failed to mirror evidence to %s: %s", EVIDENCE_DIR, e)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,6 @@
+timestamp,iso_timestamp,elapsed_seconds,scenario,trial_number,system,cpu_utilization_percent,raw_cpu_usage_cores,cpu_request_cores,cpu_limit_cores,hpa_utilization_percent,kubepilot_utilization_percent,memory_utilization_percent,http_requests_per_second,desired_replicas,current_replicas,ready_replicas,scaling_action,workload_rps_actual,workload_latency_avg_ms
+1793857501.334868,2026-11-05T05:45:01.334868+00:00,0.13,E7_guardrail_violation,1,KubePilot,85.0,0.17,0.2,1.0,85.0,85.0,35.0,50.0,2,2,2,REJECTED_INSUFFICIENT_CPU,50.0,22.0
+1793857502.3549356,2026-11-05T05:45:02.354936+00:00,1.15,E7_guardrail_violation,1,KubePilot,85.0,0.17,0.2,1.0,85.0,85.0,35.0,50.0,2,2,2,REJECTED_INSUFFICIENT_CPU,50.0,22.0
+1793857503.3767889,2026-11-05T05:45:03.376789+00:00,2.17,E7_guardrail_violation,1,KubePilot,85.0,0.17,0.2,1.0,85.0,85.0,35.0,50.0,2,2,2,REJECTED_INSUFFICIENT_CPU,50.0,22.0
+1793857504.418011,2026-11-05T05:45:04.418011+00:00,3.21,E7_guardrail_violation,1,KubePilot,85.0,0.17,0.2,1.0,85.0,85.0,35.0,50.0,2,2,2,REJECTED_INSUFFICIENT_CPU,50.0,22.0
+1793857505.446148,2026-11-05T05:45:05.446148+00:00,4.24,E7_guardrail_violation,1,KubePilot,85.0,0.17,0.2,1.0,85.0,85.0,35.0,50.0,2,2,2,REJECTED_INSUFFICIENT_CPU,50.0,22.0

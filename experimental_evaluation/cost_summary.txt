@@ -1,0 +1,3 @@
+No cloud infrastructure was provisioned; actual cloud expenditure: USD 0.00.
+Inspection: AWS CLI credentials on this machine are rejected (InvalidClientTokenId / AuthFailure on sts and ec2), Azure CLI is not logged in, gcloud is not installed, so no cloud credits or resources could be inspected or used.
+Benchmarks ran on the existing local single-node Minikube cluster (Docker driver; 12 vCPU, ~7.8 GiB allocatable), one application, one in-cluster load-generator pod, existing Prometheus. No temporary paid resources exist, so nothing needed shutting down. The load-generator pod (kp-loadgen) is a local pod and is removed after the run.

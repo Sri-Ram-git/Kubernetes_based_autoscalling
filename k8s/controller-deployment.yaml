@@ -17,6 +17,25 @@ spec:
         app: autoscaling-controller
     spec:
       serviceAccountName: autoscaling-controller-sa
+      initContainers:
+        - name: init-policies
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              if [ ! -f /app/policies/scaling-policies.yaml ]; then
+                echo "Initializing policies from seed ConfigMap..."
+                cp /config/policies/scaling-policies.yaml /app/policies/scaling-policies.yaml
+              else
+                echo "Existing policies detected on persistent volume; preserving."
+              fi
+          volumeMounts:
+            - name: policies-data
+              mountPath: /app/policies
+            - name: config-source
+              mountPath: /config/policies
       containers:
         - name: controller
           image: autoscaling-framework:latest
@@ -35,6 +54,8 @@ spec:
               value: "false"
             - name: EVALUATION_INTERVAL_SECONDS
               value: "10"
+            - name: POLICIES_PATH
+              value: "/app/policies/scaling-policies.yaml"
           resources:
             requests:
               cpu: "50m"
@@ -43,9 +64,12 @@ spec:
               cpu: "200m"
               memory: "128Mi"
           volumeMounts:
-            - name: policies-vol
+            - name: policies-data
               mountPath: /app/policies
       volumes:
-        - name: policies-vol
+        - name: policies-data
+          persistentVolumeClaim:
+            claimName: kubepilot-policies-pvc
+        - name: config-source
           configMap:
             name: scaling-policies-cm

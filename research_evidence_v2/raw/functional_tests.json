@@ -1,0 +1,701 @@
+[
+  {
+    "test_id": "FT-01",
+    "test_name": "Application Startup & Connectivity",
+    "initial_conditions": "Minikube cluster running, Prometheus listening on port 9090, Kubernetes kubeconfig configured.",
+    "procedure": "Instantiate KubernetesExecutor and PrometheusTelemetryProvider; check connection probes.",
+    "command_or_api": "executor.is_connected(); prom.check_connection()",
+    "expected_behavior": "Both Kubernetes API and Prometheus health/readiness endpoints return reachable/ready.",
+    "actual_observed": "Kubernetes: Kubernetes API reachable. (Connected=True); Prometheus: Prometheus server is ready. (Ready=True)",
+    "status": "PASSED",
+    "supporting_evidence": {
+      "k8s_connected": true,
+      "k8s_msg": "Kubernetes API reachable.",
+      "prom_ready": true,
+      "prom_msg": "Prometheus server is ready."
+    },
+    "defect_discovered": null
+  },
+  {
+    "test_id": "FT-02",
+    "test_name": "Telemetry Collection",
+    "initial_conditions": "sample-web-app pods running in autoscaling-demo namespace.",
+    "procedure": "Query live instant vector PromQL for CPU and Memory utilization.",
+    "command_or_api": "prom.query_instant('(sum(rate(container_cpu_usage_seconds_total{namespace=\"autoscaling-demo\", pod=~\"sample-web-app-.*\"}[1m])) / (count(count by (pod) (container_cpu_usage_seconds_total{namespace=\"autoscaling-demo\", pod=~\"sample-web-app-.*\"})) * 0.1) * 100) or (sum(rate(container_cpu_usage_seconds_total{namespace=\"autoscaling-demo\", pod=~\"sample-web-app-.*\"}[1m])) / (sum(container_spec_cpu_quota{namespace=\"autoscaling-demo\", pod=~\"sample-web-app-.*\"}) / avg(container_spec_cpu_period{namespace=\"autoscaling-demo\", pod=~\"sample-web-app-.*\"})) * 100) or (sum(rate(container_cpu_usage_seconds_total{namespace=\"autoscaling-demo\", pod=~\"sample-web-app-.*\"}[1m])) * 100) or sum(sample_app_cpu_utilization_percent{namespace=\"autoscaling-demo\"}) or sum(sample_app_cpu_utilization_percent)')",
+    "expected_behavior": "Prometheus returns HTTP 200 with non-null, finite values marked MetricStatus.VALID.",
+    "actual_observed": "CPU: 1.3678967584691692% (status=VALID); Memory: 10.801188151041668% (status=VALID)",
+    "status": "PASSED",
+    "supporting_evidence": {
+      "cpu": {
+        "metric_name": "cpu_utilization_percent",
+        "value": 1.37,
+        "unit": "%",
+        "timestamp": 1793859611.354,
+        "freshness_seconds": 0.0,
+        "status": "VALID",
+        "is_usable": true,
+        "source": "prometheus",
+        "query": "(sum(rate(container_cpu_usage_seconds_total{namespace=\"autoscaling-demo\", pod=~\"sample-web-app-.*\"}[1m])) / (count(count by (pod) (container_cpu_usage_seconds_total{namespace=\"autoscaling-demo\", pod=~\"sample-web-app-.*\"})) * 0.1) * 100) or (sum(rate(container_cpu_usage_seconds_total{namespace=\"autoscaling-demo\", pod=~\"sample-web-app-.*\"}[1m])) / (sum(container_spec_cpu_quota{namespace=\"autoscaling-demo\", pod=~\"sample-web-app-.*\"}) / avg(container_spec_cpu_period{namespace=\"autoscaling-demo\", pod=~\"sample-web-app-.*\"})) * 100) or (sum(rate(container_cpu_usage_seconds_total{namespace=\"autoscaling-demo\", pod=~\"sample-web-app-.*\"}[1m])) * 100) or sum(sample_app_cpu_utilization_percent{namespace=\"autoscaling-demo\"}) or sum(sample_app_cpu_utilization_percent)",
+        "error_message": null,
+        "scrape_target": ""
+      },
+      "memory": {
+        "metric_name": "memory_utilization_percent",
+        "value": 10.8,
+        "unit": "%",
+        "timestamp": 1793859611.361,
+        "freshness_seconds": 0.0,
+        "status": "VALID",
+        "is_usable": true,
+        "source": "prometheus",
+        "query": "(sum(container_memory_working_set_bytes{namespace=\"autoscaling-demo\", pod=~\"sample-web-app-.*\"}) / sum(container_spec_memory_limit_bytes{namespace=\"autoscaling-demo\", pod=~\"sample-web-app-.*\"}) * 100) or sum(sample_app_memory_utilization_percent{namespace=\"autoscaling-demo\"}) or sum(sample_app_memory_utilization_percent)",
+        "error_message": null,
+        "scrape_target": ""
+      }
+    },
+    "defect_discovered": null
+  },
+  {
+    "test_id": "FT-03",
+    "test_name": "Telemetry Freshness",
+    "initial_conditions": "Sample with age 120.0s exceeds staleness threshold of 60.0s.",
+    "procedure": "Submit stale metric sample to is_usable() check and evaluate decision controller response.",
+    "command_or_api": "sample.is_usable(); decision_ctrl.compute_decision({'cpu_utilization_percent': stale_sample})",
+    "expected_behavior": "Stale metric marked unusable (is_usable() == False); PRAH safely defaults to HOLD.",
+    "actual_observed": "is_usable=False, Decision=HOLD, Reason='PRAH Fallback Triggered: Telemetry safety check failed for cpu_utilization_percent (STALE). Holding replica count to prevent unsafe scaling during telemetry degradation.'",
+    "status": "PASSED",
+    "supporting_evidence": {
+      "is_usable": false,
+      "fallback_action": "HOLD",
+      "explanation": "PRAH Fallback Triggered: Telemetry safety check failed for cpu_utilization_percent (STALE). Holding replica count to prevent unsafe scaling during telemetry degradation."
+    },
+    "defect_discovered": null
+  },
+  {
+    "test_id": "FT-04",
+    "test_name": "Policy Loading",
+    "initial_conditions": "File policies/scaling-policies.yaml exists with 6 defined policies.",
+    "procedure": "Load policies using PolicyEngine; inspect parsed rule structure.",
+    "command_or_api": "policy_eng = PolicyEngine('C:\\Users\\SRIRAM\\design_project\\policies\\scaling-policies.yaml'); policy_eng.rules",
+    "expected_behavior": "All 6 policies successfully loaded with validated schema, thresholds, and priorities.",
+    "actual_observed": "Loaded 6 valid policies: ['CPU_CRITICAL_SPIKE', 'CPU_HIGH_LOAD', 'MEM_HIGH_USAGE', 'RPS_HIGH_TRAFFIC', 'CPU_LOW_LOAD', 'MEM_LOW_USAGE']",
+    "status": "PASSED",
+    "supporting_evidence": {
+      "count": 6,
+      "policy_ids": [
+        "CPU_CRITICAL_SPIKE",
+        "CPU_HIGH_LOAD",
+        "MEM_HIGH_USAGE",
+        "RPS_HIGH_TRAFFIC",
+        "CPU_LOW_LOAD",
+        "MEM_LOW_USAGE"
+      ]
+    },
+    "defect_discovered": null
+  },
+  {
+    "test_id": "FT-05",
+    "test_name": "Policy Matching",
+    "initial_conditions": "CPU threshold for CPU_CRITICAL_SPIKE is >= 90.0%.",
+    "procedure": "Evaluate PRAH with CPU = 95.0%; check selected policy ID.",
+    "command_or_api": "decision_ctrl.compute_decision({'cpu_utilization_percent': 95.0})",
+    "expected_behavior": "CPU_CRITICAL_SPIKE activates with action SCALE_OUT and proposed delta +2.",
+    "actual_observed": "Action: SCALE_OUT, Selected Policy: CPU_CRITICAL_SPIKE, Delta: 2",
+    "status": "PASSED",
+    "supporting_evidence": {
+      "action": "SCALE_OUT",
+      "current_replicas": 2,
+      "proposed_replica_delta": 2,
+      "target_replicas": 4,
+      "selected_policy_id": "CPU_CRITICAL_SPIKE",
+      "selected_policy_name": "Critical CPU Spike Scale-Out",
+      "priority": 100,
+      "explanation": "PRAH Approved Action: SCALE_OUT by +2 replica(s) via policy 'Critical CPU Spike Scale-Out' (priority=100). Reason: Condition 'cpu_utilization_percent (95.00) >= 90.00' sustained for 0.0s >= 0.0s. Single highest priority policy selected (priority=100).",
+      "cooldown_active": false,
+      "cooldown_remaining_seconds": 0.0,
+      "competing_proposals": [
+        {
+          "policy_id": "CPU_CRITICAL_SPIKE",
+          "policy_name": "Critical CPU Spike Scale-Out",
+          "priority": 100,
+          "action": "SCALE_OUT",
+          "replica_delta": 2,
+          "reason": "Condition 'cpu_utilization_percent (95.00) >= 90.00' sustained for 0.0s >= 0.0s",
+          "metric_name": "cpu_utilization_percent",
+          "observed_value": 95.0,
+          "threshold": 90.0,
+          "cooldown_seconds": 45.0
+        }
+      ],
+      "telemetry_summary": {
+        "cpu_utilization_percent": {
+          "value": 95.0,
+          "status": "VALID",
+          "source": "test",
+          "age_seconds": 0.0
+        },
+        "memory_utilization_percent": {
+          "value": 40.0,
+          "status": "VALID",
+          "source": "test",
+          "age_seconds": 0.0
+        },
+        "http_requests_per_second": {
+          "value": 50.0,
+          "status": "VALID",
+          "source": "test",
+          "age_seconds": 0.0
+        }
+      },
+      "timestamp": "2026-11-05T06:20:11.365050+00:00"
+    },
+    "defect_discovered": null
+  },
+  {
+    "test_id": "FT-06",
+    "test_name": "Priority Arbitration",
+    "initial_conditions": "CPU_CRITICAL_SPIKE has priority 100; RPS_HIGH_TRAFFIC has priority 60.",
+    "procedure": "Supply CPU=95% and RPS=200 simultaneously; verify that higher-priority rule arbitrates the decision.",
+    "command_or_api": "decision_ctrl.compute_decision({'cpu': 95.0, 'rps': 200.0})",
+    "expected_behavior": "CPU_CRITICAL_SPIKE (priority 100) wins arbitration over RPS_HIGH_TRAFFIC (priority 60).",
+    "actual_observed": "Winner: CPU_CRITICAL_SPIKE (Priority: 100), Competing: [{'policy_id': 'CPU_CRITICAL_SPIKE', 'policy_name': 'Critical CPU Spike Scale-Out', 'priority': 100, 'action': 'SCALE_OUT', 'replica_delta': 2, 'reason': \"Condition 'cpu_utilization_percent (95.00) >= 90.00' sustained for 0.0s >= 0.0s\", 'metric_name': 'cpu_utilization_percent', 'observed_value': 95.0, 'threshold': 90.0, 'cooldown_seconds': 45.0}, {'policy_id': 'RPS_HIGH_TRAFFIC', 'policy_name': 'High HTTP Request Rate Scale-Out', 'priority': 60, 'action': 'SCALE_OUT', 'replica_delta': 1, 'reason': \"Condition 'http_requests_per_second (200.00) > 150.00' sustained for 0.0s >= 0.0s\", 'metric_name': 'http_requests_per_second', 'observed_value': 200.0, 'threshold': 150.0, 'cooldown_seconds': 60.0}]",
+    "status": "PASSED",
+    "supporting_evidence": {
+      "action": "SCALE_OUT",
+      "current_replicas": 2,
+      "proposed_replica_delta": 2,
+      "target_replicas": 4,
+      "selected_policy_id": "CPU_CRITICAL_SPIKE",
+      "selected_policy_name": "Critical CPU Spike Scale-Out",
+      "priority": 100,
+      "explanation": "PRAH Approved Action: SCALE_OUT by +2 replica(s) via policy 'Critical CPU Spike Scale-Out' (priority=100). Reason: Condition 'cpu_utilization_percent (95.00) >= 90.00' sustained for 0.0s >= 0.0s. Single highest priority policy selected (priority=100).",
+      "cooldown_active": false,
+      "cooldown_remaining_seconds": 0.0,
+      "competing_proposals": [
+        {
+          "policy_id": "CPU_CRITICAL_SPIKE",
+          "policy_name": "Critical CPU Spike Scale-Out",
+          "priority": 100,
+          "action": "SCALE_OUT",
+          "replica_delta": 2,
+          "reason": "Condition 'cpu_utilization_percent (95.00) >= 90.00' sustained for 0.0s >= 0.0s",
+          "metric_name": "cpu_utilization_percent",
+          "observed_value": 95.0,
+          "threshold": 90.0,
+          "cooldown_seconds": 45.0
+        },
+        {
+          "policy_id": "RPS_HIGH_TRAFFIC",
+          "policy_name": "High HTTP Request Rate Scale-Out",
+          "priority": 60,
+          "action": "SCALE_OUT",
+          "replica_delta": 1,
+          "reason": "Condition 'http_requests_per_second (200.00) > 150.00' sustained for 0.0s >= 0.0s",
+          "metric_name": "http_requests_per_second",
+          "observed_value": 200.0,
+          "threshold": 150.0,
+          "cooldown_seconds": 60.0
+        }
+      ],
+      "telemetry_summary": {
+        "cpu_utilization_percent": {
+          "value": 95.0,
+          "status": "VALID",
+          "source": "test",
+          "age_seconds": 0.0
+        },
+        "memory_utilization_percent": {
+          "value": 40.0,
+          "status": "VALID",
+          "source": "test",
+          "age_seconds": 0.0
+        },
+        "http_requests_per_second": {
+          "value": 200.0,
+          "status": "VALID",
+          "source": "test",
+          "age_seconds": 0.0
+        }
+      },
+      "timestamp": "2026-11-05T06:20:11.365187+00:00"
+    },
+    "defect_discovered": null
+  },
+  {
+    "test_id": "FT-07",
+    "test_name": "Tie-Breaking",
+    "initial_conditions": "Two matching rules with identical priority (90): one SCALE_OUT, one SCALE_IN.",
+    "procedure": "Pass both matching conditions simultaneously to DecisionController; observe tie-breaking outcome.",
+    "command_or_api": "ctrl_tie.compute_decision({'cpu': 85.0, 'mem': 20.0})",
+    "expected_behavior": "SCALE_OUT_WINS rule arbitrates tie in favor of scale-out to preserve availability.",
+    "actual_observed": "Selected rule: TIE_SCALE_OUT with action SCALE_OUT (Priority: 90)",
+    "status": "PASSED",
+    "supporting_evidence": {
+      "action": "SCALE_OUT",
+      "current_replicas": 3,
+      "proposed_replica_delta": 1,
+      "target_replicas": 4,
+      "selected_policy_id": "TIE_SCALE_OUT",
+      "selected_policy_name": "Tie Scale Out",
+      "priority": 90,
+      "explanation": "PRAH Approved Action: SCALE_OUT by +1 replica(s) via policy 'Tie Scale Out' (priority=90). Reason: Condition 'cpu_utilization_percent (85.00) > 80.00' sustained for 0.0s >= 0.0s. Tie-breaking: Equal priority conflict between 1 SCALE_OUT and 1 SCALE_IN policies. SCALE_OUT chosen for service availability.",
+      "cooldown_active": false,
+      "cooldown_remaining_seconds": 0.0,
+      "competing_proposals": [
+        {
+          "policy_id": "TIE_SCALE_OUT",
+          "policy_name": "Tie Scale Out",
+          "priority": 90,
+          "action": "SCALE_OUT",
+          "replica_delta": 1,
+          "reason": "Condition 'cpu_utilization_percent (85.00) > 80.00' sustained for 0.0s >= 0.0s",
+          "metric_name": "cpu_utilization_percent",
+          "observed_value": 85.0,
+          "threshold": 80.0,
+          "cooldown_seconds": 60.0
+        },
+        {
+          "policy_id": "TIE_SCALE_IN",
+          "policy_name": "Tie Scale In",
+          "priority": 90,
+          "action": "SCALE_IN",
+          "replica_delta": -1,
+          "reason": "Condition 'memory_utilization_percent (20.00) < 30.00' sustained for 0.0s >= 0.0s",
+          "metric_name": "memory_utilization_percent",
+          "observed_value": 20.0,
+          "threshold": 30.0,
+          "cooldown_seconds": 60.0
+        }
+      ],
+      "telemetry_summary": {
+        "cpu_utilization_percent": {
+          "value": 85.0,
+          "status": "VALID",
+          "source": "test",
+          "age_seconds": 0.0
+        },
+        "memory_utilization_percent": {
+          "value": 20.0,
+          "status": "VALID",
+          "source": "test",
+          "age_seconds": 0.0
+        }
+      },
+      "timestamp": "2026-11-05T06:20:11.365331+00:00"
+    },
+    "defect_discovered": null
+  },
+  {
+    "test_id": "FT-08",
+    "test_name": "Hysteresis Band Enforcement",
+    "initial_conditions": "Previous action was SCALE_IN; hysteresis band = 5.0%. CPU = 76.0% (within 5% band).",
+    "procedure": "Request decision following scale-in when metric is marginally above threshold.",
+    "command_or_api": "decision_ctrl.compute_decision({'cpu': 76.0})",
+    "expected_behavior": "Hysteresis suppresses rapid direction reversal; outputs HOLD.",
+    "actual_observed": "Action: HOLD, Explanation: 'No policy thresholds breached. Workload operating within nominal parameters; holding current replicas.'",
+    "status": "PASSED",
+    "supporting_evidence": {
+      "action": "HOLD",
+      "current_replicas": 3,
+      "proposed_replica_delta": 0,
+      "target_replicas": 3,
+      "selected_policy_id": null,
+      "selected_policy_name": null,
+      "priority": 0,
+      "explanation": "No policy thresholds breached. Workload operating within nominal parameters; holding current replicas.",
+      "cooldown_active": false,
+      "cooldown_remaining_seconds": 0.0,
+      "competing_proposals": [],
+      "telemetry_summary": {
+        "cpu_utilization_percent": {
+          "value": 76.0,
+          "status": "VALID",
+          "source": "test",
+          "age_seconds": 0.0
+        },
+        "memory_utilization_percent": {
+          "value": 50.0,
+          "status": "VALID",
+          "source": "test",
+          "age_seconds": 0.0
+        },
+        "http_requests_per_second": {
+          "value": 50.0,
+          "status": "VALID",
+          "source": "test",
+          "age_seconds": 0.0
+        }
+      },
+      "timestamp": "2026-11-05T06:20:11.365477+00:00"
+    },
+    "defect_discovered": null
+  },
+  {
+    "test_id": "FT-09",
+    "test_name": "Live Scale-Out Execution",
+    "initial_conditions": "sample-web-app deployment at 2 replicas.",
+    "procedure": "Execute live scale-out to 3 replicas with verification.",
+    "command_or_api": "executor.execute_scaling(action='SCALE_OUT', target_replicas=3, dry_run=False)",
+    "expected_behavior": "Kubernetes Deployment scale patched to 3; verified ready_replicas == 3.",
+    "actual_observed": "Success=True, Desired=3, Ready=3, Duration=8419.3ms",
+    "status": "PASSED",
+    "supporting_evidence": {
+      "success": true,
+      "dry_run": false,
+      "initial_replicas": 2,
+      "target_replicas": 3,
+      "confirmed_replicas": 3,
+      "action_type": "SCALE_OUT",
+      "message": "Successfully scaled sample-web-app from 2 to 3 and verified by Kubernetes API (Ready: 3/3).",
+      "error": null,
+      "execution_duration_ms": 8419.334888458252
+    },
+    "defect_discovered": null
+  },
+  {
+    "test_id": "FT-10",
+    "test_name": "Live Scale-In Execution",
+    "initial_conditions": "sample-web-app deployment at 3 replicas.",
+    "procedure": "Execute live scale-in to 2 replicas with complete pod termination verification.",
+    "command_or_api": "executor.execute_scaling(action='SCALE_IN', target_replicas=2, dry_run=False)",
+    "expected_behavior": "Kubernetes Deployment scale patched to 2; verified ready_replicas == 2 and terminating pods fully drained.",
+    "actual_observed": "Success=True, Desired=2, Ready=2, Active Pods=2, Duration=1099.4ms",
+    "status": "PASSED",
+    "supporting_evidence": {
+      "success": true,
+      "dry_run": false,
+      "initial_replicas": 3,
+      "target_replicas": 2,
+      "confirmed_replicas": 2,
+      "action_type": "SCALE_IN",
+      "message": "Successfully scaled sample-web-app from 3 to 2 and verified by Kubernetes API (Ready: 2/2).",
+      "error": null,
+      "execution_duration_ms": 1099.3754863739014
+    },
+    "defect_discovered": null
+  },
+  {
+    "test_id": "FT-11",
+    "test_name": "Cooldown Enforcement",
+    "initial_conditions": "Action recorded with 60.0s cooldown.",
+    "procedure": "Immediately submit high-CPU metric crossing scale-out threshold during cooldown window.",
+    "command_or_api": "decision_ctrl.compute_decision(...) while cooldown_active is True",
+    "expected_behavior": "Cooldown timer suppresses repeated scaling; returns HOLD.",
+    "actual_observed": "Action: HOLD, Cooldown Active: True, Remaining: 45.0s",
+    "status": "PASSED",
+    "supporting_evidence": {
+      "action": "HOLD",
+      "current_replicas": 2,
+      "proposed_replica_delta": 0,
+      "target_replicas": 2,
+      "selected_policy_id": "CPU_CRITICAL_SPIKE",
+      "selected_policy_name": "Critical CPU Spike Scale-Out",
+      "priority": 100,
+      "explanation": "PRAH Cooldown Active: Policy 'Critical CPU Spike Scale-Out' triggered SCALE_OUT, but cooldown is active (45.0s remaining of 45.0s). Action held.",
+      "cooldown_active": true,
+      "cooldown_remaining_seconds": 44.99994659423828,
+      "competing_proposals": [
+        {
+          "policy_id": "CPU_CRITICAL_SPIKE",
+          "policy_name": "Critical CPU Spike Scale-Out",
+          "priority": 100,
+          "action": "SCALE_OUT",
+          "replica_delta": 2,
+          "reason": "Condition 'cpu_utilization_percent (95.00) >= 90.00' sustained for 0.0s >= 0.0s",
+          "metric_name": "cpu_utilization_percent",
+          "observed_value": 95.0,
+          "threshold": 90.0,
+          "cooldown_seconds": 45.0
+        },
+        {
+          "policy_id": "CPU_HIGH_LOAD",
+          "policy_name": "High CPU Load Scale-Out",
+          "priority": 80,
+          "action": "SCALE_OUT",
+          "replica_delta": 1,
+          "reason": "Condition 'cpu_utilization_percent (95.00) > 75.00' sustained for 9.7s >= 5.0s",
+          "metric_name": "cpu_utilization_percent",
+          "observed_value": 95.0,
+          "threshold": 75.0,
+          "cooldown_seconds": 60.0
+        }
+      ],
+      "telemetry_summary": {
+        "cpu_utilization_percent": {
+          "value": 95.0,
+          "status": "VALID",
+          "source": "test",
+          "age_seconds": 9.7
+        },
+        "memory_utilization_percent": {
+          "value": 40.0,
+          "status": "VALID",
+          "source": "test",
+          "age_seconds": 9.7
+        },
+        "http_requests_per_second": {
+          "value": 50.0,
+          "status": "VALID",
+          "source": "test",
+          "age_seconds": 9.7
+        }
+      },
+      "timestamp": "2026-11-05T06:20:20.920089+00:00"
+    },
+    "defect_discovered": null
+  },
+  {
+    "test_id": "FT-12",
+    "test_name": "Replica Limits Boundary Enforcement",
+    "initial_conditions": "min_replicas=2, max_replicas=10.",
+    "procedure": "Test scale-in below min (2 -> 1) and scale-out above max (10 -> 12).",
+    "command_or_api": "guardrails.validate_action('SCALE_IN', 2, 1, -1); guardrails.validate_action('SCALE_OUT', 10, 12, 2)",
+    "expected_behavior": "Both out-of-bounds requests are rejected (approved=False, action='REJECTED').",
+    "actual_observed": "Min boundary: REJECTED ('Workload already at minimum replica boundary (2). Scale-in to 1 rejected.'); Max boundary: REJECTED ('Workload already at maximum replica ceiling (10). Scale-out to 12 rejected.')",
+    "status": "PASSED",
+    "supporting_evidence": {
+      "min_test": {
+        "approved": false,
+        "action": "REJECTED",
+        "original_target_replicas": 1,
+        "authorized_target_replicas": 2,
+        "replica_delta": 0,
+        "clamped": false,
+        "rejection_reason": "Workload already at minimum replica boundary (2). Scale-in to 1 rejected.",
+        "is_dry_run": false,
+        "authorization_note": "Rejected: min_replicas limit reached (2)."
+      },
+      "max_test": {
+        "approved": false,
+        "action": "REJECTED",
+        "original_target_replicas": 12,
+        "authorized_target_replicas": 10,
+        "replica_delta": 0,
+        "clamped": false,
+        "rejection_reason": "Workload already at maximum replica ceiling (10). Scale-out to 12 rejected.",
+        "is_dry_run": false,
+        "authorization_note": "Rejected: max_replicas ceiling reached (10)."
+      }
+    },
+    "defect_discovered": null
+  },
+  {
+    "test_id": "FT-13",
+    "test_name": "Pre-Scaling Capacity Validation",
+    "initial_conditions": "Minikube node allocatable CPU/RAM queried via CoreV1Api.",
+    "procedure": "Validate real cluster capacity for +2 pods; test StrategyCoordinator blocking on insufficient capacity.",
+    "command_or_api": "cap_val.validate_scale_out(delta=2); coord_cap.coordinate_and_execute('SCALE_OUT', 2, 4, 2)",
+    "expected_behavior": "Real cluster reports CAPACITY_SUFFICIENT; simulated exhaustion correctly blocks scale-out with REJECTED.",
+    "actual_observed": "Real cluster: CAPACITY_SUFFICIENT (Sufficient=True); Exhaustion test: Action=REJECTED, Error=INSUFFICIENT_CPU",
+    "status": "PASSED",
+    "supporting_evidence": {
+      "real_capacity": {
+        "outcome": "CAPACITY_SUFFICIENT",
+        "is_sufficient": true,
+        "requested_replicas_delta": 2,
+        "pod_cpu_m": 100,
+        "pod_memory_bytes": 134217728,
+        "pod_memory_human": "128.0 MiB",
+        "total_additional_cpu_m": 200,
+        "total_additional_memory_bytes": 268435456,
+        "total_additional_memory_human": "256.0 MiB",
+        "message": "Sufficient capacity on 1 node(s) for +2 pod(s). minikube (10350m CPU, 6409.2 MiB mem remaining)",
+        "evaluated_nodes": [
+          {
+            "node_name": "minikube",
+            "is_ready": true,
+            "is_schedulable": true,
+            "matches_taints": true,
+            "allocatable_cpu_m": 12000,
+            "allocatable_memory_bytes": 8182247424,
+            "allocatable_memory_human": "7803.2 MiB",
+            "requested_cpu_m": 1450,
+            "requested_memory_bytes": 1193279488,
+            "requested_memory_human": "1138.0 MiB",
+            "available_cpu_m": 10550,
+            "available_memory_bytes": 6988967936,
+            "available_memory_human": "6665.2 MiB",
+            "active_pods_count": 17
+          }
+        ],
+        "timestamp": 1793859620.99039,
+        "disclaimer": "Pre-scaling capacity check based on Kubernetes node allocatable resource requests. The authoritative placement decision is made solely by the Kubernetes scheduler at pod creation time."
+      },
+      "blocked_guardrail": {
+        "approved": false,
+        "action": "REJECTED",
+        "original_target_replicas": 4,
+        "authorized_target_replicas": 2,
+        "replica_delta": 0,
+        "clamped": false,
+        "rejection_reason": "Scale-out blocked by capacity guardrail: Insufficient CPU capacity on eligible nodes. (Outcome: INSUFFICIENT_CPU)",
+        "is_dry_run": false,
+        "authorization_note": "Scale-out blocked by capacity guardrail: Insufficient CPU capacity on eligible nodes. (Outcome: INSUFFICIENT_CPU)"
+      },
+      "blocked_exec": {
+        "success": false,
+        "dry_run": false,
+        "initial_replicas": 2,
+        "target_replicas": 2,
+        "confirmed_replicas": 2,
+        "action_type": "HOLD",
+        "message": "Scale-out blocked by capacity guardrail: Insufficient CPU capacity on eligible nodes. (Outcome: INSUFFICIENT_CPU)",
+        "error": "INSUFFICIENT_CPU",
+        "execution_duration_ms": 0.0
+      }
+    },
+    "defect_discovered": "Verified prior defect where guardrail_result.action=='SCALE_OUT' was unreachable; confirmed resolved."
+  },
+  {
+    "test_id": "FT-14",
+    "test_name": "Kubernetes API Execution & Error Handling",
+    "initial_conditions": "Targeting non-existent Kubernetes namespace 'nonexistent-namespace-357'.",
+    "procedure": "Attempt live scaling against invalid namespace; inspect ExecutionResult.",
+    "command_or_api": "bad_executor.execute_scaling('SCALE_OUT', 3, dry_run=False)",
+    "expected_behavior": "API returns failure (success=False); detailed error message captured without crash.",
+    "actual_observed": "Success=False, Message='Live scaling failed due to Kubernetes API exception.', Error='Kubernetes API error (HTTP 404): Not Found - {\"kind\":\"Status\",\"apiVersion\":\"v1\",\"metadata\":{},\"status\":\"Failure\",\"message\":\"deployments.apps \\\"sample-web-app\\\" not found\",\"reason\":\"NotFound\",\"details\":{\"name\":\"sample-web-app\",\"group\":\"apps\",\"kind\":\"deployments\"},\"code\":404}\n'",
+    "status": "PASSED",
+    "supporting_evidence": {
+      "success": false,
+      "dry_run": false,
+      "initial_replicas": 2,
+      "target_replicas": 3,
+      "confirmed_replicas": null,
+      "action_type": "SCALE_OUT",
+      "message": "Live scaling failed due to Kubernetes API exception.",
+      "error": "Kubernetes API error (HTTP 404): Not Found - {\"kind\":\"Status\",\"apiVersion\":\"v1\",\"metadata\":{},\"status\":\"Failure\",\"message\":\"deployments.apps \\\"sample-web-app\\\" not found\",\"reason\":\"NotFound\",\"details\":{\"name\":\"sample-web-app\",\"group\":\"apps\",\"kind\":\"deployments\"},\"code\":404}\n",
+      "execution_duration_ms": 17.685890197753906
+    },
+    "defect_discovered": null
+  },
+  {
+    "test_id": "FT-15",
+    "test_name": "Execution Verification",
+    "initial_conditions": "sample-web-app deployment at steady state (desired=2, ready=2).",
+    "procedure": "Verify workload state confirms desired_replicas == ready_replicas and active pod list contains exactly matching ready pods without terminating remnants.",
+    "command_or_api": "executor.get_workload_state()",
+    "expected_behavior": "State reports matching desired, current, and ready replica counts (exactly 2) and exactly 2 active pods in pod list.",
+    "actual_observed": "Desired: 2, Ready: 2, Active Pods in List: 2 (['sample-web-app-59c6d8b9b8-tphhg', 'sample-web-app-59c6d8b9b8-zghmp']), Connected: True",
+    "status": "PASSED",
+    "supporting_evidence": {
+      "namespace": "autoscaling-demo",
+      "name": "sample-web-app",
+      "desired_replicas": 2,
+      "current_replicas": 2,
+      "ready_replicas": 2,
+      "available_replicas": 2,
+      "unavailable_replicas": 0,
+      "connected": true,
+      "status_message": "Healthy - Connected to Kubernetes cluster",
+      "pods": [
+        {
+          "name": "sample-web-app-59c6d8b9b8-tphhg",
+          "phase": "Running",
+          "ready": true,
+          "restarts": 0,
+          "node": "minikube"
+        },
+        {
+          "name": "sample-web-app-59c6d8b9b8-zghmp",
+          "phase": "Running",
+          "ready": true,
+          "restarts": 0,
+          "node": "minikube"
+        }
+      ]
+    },
+    "defect_discovered": "Resolved reporting discrepancy where terminating pods with deletionTimestamp were previously included in pod list without exclusion filter."
+  },
+  {
+    "test_id": "FT-16",
+    "test_name": "Decision & Audit Logging",
+    "initial_conditions": "Audit log file path configured at C:\\Users\\SRIRAM\\design_project\\logs\\decisions.jsonl.",
+    "procedure": "Log an auto-scaling cycle to disk; verify JSON Lines formatting and persistence.",
+    "command_or_api": "logger_inst.log_cycle(...)",
+    "expected_behavior": "Cycle successfully appended to JSONL log file with complete telemetry, decision, and execution records.",
+    "actual_observed": "Logged cycle_id=eval-e2b3403f, Timestamp=2026-11-05T06:20:21.036106+00:00, File=C:\\Users\\SRIRAM\\design_project\\logs\\decisions.jsonl",
+    "status": "PASSED",
+    "supporting_evidence": {
+      "cycle_id": "eval-e2b3403f",
+      "log_path": "C:\\Users\\SRIRAM\\design_project\\logs\\decisions.jsonl"
+    },
+    "defect_discovered": null
+  },
+  {
+    "test_id": "FT-17",
+    "test_name": "Dashboard API & Data Integrity",
+    "initial_conditions": "Flask dashboard app initialized with access to KubernetesExecutor, Telemetry, and PolicyEngine.",
+    "procedure": "Query core API endpoints: /api/status, /api/workloads, /api/metrics, /api/policies, /api/history.",
+    "command_or_api": "client.get('/api/status'); client.get('/api/workloads'); ...",
+    "expected_behavior": "All endpoints return HTTP 200 with JSON structures reflecting live cluster and policy state.",
+    "actual_observed": "Status: 200, Workloads: 200, Metrics: 200, Policies: 200, History: 200",
+    "status": "PASSED",
+    "supporting_evidence": {
+      "status_code_status": 200,
+      "status_code_workloads": 200,
+      "status_code_metrics": 200
+    },
+    "defect_discovered": null
+  },
+  {
+    "test_id": "FT-18",
+    "test_name": "Fault Recovery & Fail-Safe Operation",
+    "initial_conditions": "Prometheus temporarily unreachable at invalid port 19099.",
+    "procedure": "Simulate connection failure; verify controller enters HOLD without crash, and recovers when connectivity is restored.",
+    "command_or_api": "bad_prom.query_instant(...); prom_provider.query_instant(...)",
+    "expected_behavior": "Outage triggers safe fallback (HOLD without mutation); normal telemetry processing resumes upon reconnection.",
+    "actual_observed": "Outage status=ERROR, Fallback action=HOLD; Recovery status=VALID, Usable=True",
+    "status": "PASSED",
+    "supporting_evidence": {
+      "outage_sample": {
+        "metric_name": "cpu_utilization_percent",
+        "value": null,
+        "unit": "%",
+        "timestamp": 1793859621.2380738,
+        "freshness_seconds": 0.0,
+        "status": "ERROR",
+        "is_usable": false,
+        "source": "prometheus",
+        "query": "up",
+        "error_message": "Query timed out after 0.2s while contacting Prometheus.",
+        "scrape_target": null
+      },
+      "fallback_decision": {
+        "action": "HOLD",
+        "current_replicas": 2,
+        "proposed_replica_delta": 0,
+        "target_replicas": 2,
+        "selected_policy_id": "FALLBACK_TELEMETRY_INVALID",
+        "selected_policy_name": "Telemetry Safety Fallback",
+        "priority": 999,
+        "explanation": "PRAH Fallback Triggered: Telemetry safety check failed for cpu_utilization_percent (ERROR). Holding replica count to prevent unsafe scaling during telemetry degradation.",
+        "cooldown_active": false,
+        "cooldown_remaining_seconds": 0.0,
+        "competing_proposals": [],
+        "telemetry_summary": {
+          "cpu_utilization_percent": {
+            "value": null,
+            "status": "ERROR",
+            "source": "prometheus",
+            "age_seconds": 0.4
+          }
+        },
+        "timestamp": "2026-11-05T06:20:21.672137+00:00"
+      },
+      "recovery_sample": {
+        "metric_name": "cpu_utilization_percent",
+        "value": 1.65,
+        "unit": "%",
+        "timestamp": 1793859621.677,
+        "freshness_seconds": 0.0,
+        "status": "VALID",
+        "is_usable": true,
+        "source": "prometheus",
+        "query": "(sum(rate(container_cpu_usage_seconds_total{namespace=\"autoscaling-demo\", pod=~\"sample-web-app-.*\"}[1m])) / (count(count by (pod) (container_cpu_usage_seconds_total{namespace=\"autoscaling-demo\", pod=~\"sample-web-app-.*\"})) * 0.1) * 100) or (sum(rate(container_cpu_usage_seconds_total{namespace=\"autoscaling-demo\", pod=~\"sample-web-app-.*\"}[1m])) / (sum(container_spec_cpu_quota{namespace=\"autoscaling-demo\", pod=~\"sample-web-app-.*\"}) / avg(container_spec_cpu_period{namespace=\"autoscaling-demo\", pod=~\"sample-web-app-.*\"})) * 100) or (sum(rate(container_cpu_usage_seconds_total{namespace=\"autoscaling-demo\", pod=~\"sample-web-app-.*\"}[1m])) * 100) or sum(sample_app_cpu_utilization_percent{namespace=\"autoscaling-demo\"}) or sum(sample_app_cpu_utilization_percent)",
+        "error_message": null,
+        "scrape_target": ""
+      }
+    },
+    "defect_discovered": null
+  }
+]

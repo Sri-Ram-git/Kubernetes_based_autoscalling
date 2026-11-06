@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kubepilot-policies-pvc
+  namespace: autoscaling-demo
+  labels:
+    app: kubepilot
+    project: "357"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 64Mi

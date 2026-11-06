@@ -370,3 +370,13 @@ def test_manual_scale_exposes_kubernetes_unavailable(client, monkeypatch):
     response = client.post("/api/workloads/scale", json={"target_replicas": 5})
     assert response.status_code == 409
     assert "forbidden" in response.get_json()["error"]
+
+
+def test_api_capacity_endpoint(client):
+    res = client.get("/api/capacity?delta=2")
+    assert res.status_code == 200
+    data = res.get_json()
+    assert "outcome" in data
+    assert "is_sufficient" in data
+    assert "disclaimer" in data
+    assert "evaluated_nodes" in data

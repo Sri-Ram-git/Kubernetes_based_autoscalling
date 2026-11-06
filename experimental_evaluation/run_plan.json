@@ -1,0 +1,346 @@
+{
+ "seed": 357,
+ "pairs": 2,
+ "plan": [
+  {
+   "profile": {
+    "name": "moderate",
+    "dur": 240,
+    "schedule": [
+     [
+      0,
+      240,
+      3
+     ]
+    ],
+    "onset": null,
+    "drop_t": null
+   },
+   "pair": 2,
+   "system_order": [
+    "HPA",
+    "KubePilot"
+   ]
+  },
+  {
+   "profile": {
+    "name": "spike",
+    "dur": 240,
+    "schedule": [
+     [
+      0,
+      24,
+      1
+     ],
+     [
+      24,
+      240,
+      7
+     ]
+    ],
+    "onset": 24,
+    "drop_t": null
+   },
+   "pair": 2,
+   "system_order": [
+    "HPA",
+    "KubePilot"
+   ]
+  },
+  {
+   "profile": {
+    "name": "variable",
+    "dur": 240,
+    "schedule": [
+     [
+      0,
+      30,
+      2
+     ],
+     [
+      30,
+      60,
+      8
+     ],
+     [
+      60,
+      90,
+      6
+     ],
+     [
+      90,
+      120,
+      3
+     ],
+     [
+      120,
+      150,
+      8
+     ],
+     [
+      150,
+      180,
+      8
+     ],
+     [
+      180,
+      210,
+      1
+     ],
+     [
+      210,
+      240,
+      1
+     ]
+    ],
+    "onset": 30,
+    "drop_t": 30
+   },
+   "pair": 2,
+   "system_order": [
+    "KubePilot",
+    "HPA"
+   ]
+  },
+  {
+   "profile": {
+    "name": "low",
+    "dur": 240,
+    "schedule": [
+     [
+      0,
+      240,
+      2
+     ]
+    ],
+    "onset": null,
+    "drop_t": null
+   },
+   "pair": 1,
+   "system_order": [
+    "KubePilot",
+    "HPA"
+   ]
+  },
+  {
+   "profile": {
+    "name": "sustained_high",
+    "dur": 240,
+    "schedule": [
+     [
+      0,
+      240,
+      8
+     ]
+    ],
+    "onset": null,
+    "drop_t": null
+   },
+   "pair": 2,
+   "system_order": [
+    "HPA",
+    "KubePilot"
+   ]
+  },
+  {
+   "profile": {
+    "name": "variable",
+    "dur": 240,
+    "schedule": [
+     [
+      0,
+      30,
+      2
+     ],
+     [
+      30,
+      60,
+      5
+     ],
+     [
+      60,
+      90,
+      1
+     ],
+     [
+      90,
+      120,
+      8
+     ],
+     [
+      120,
+      150,
+      7
+     ],
+     [
+      150,
+      180,
+      7
+     ],
+     [
+      180,
+      210,
+      8
+     ],
+     [
+      210,
+      240,
+      8
+     ]
+    ],
+    "onset": 30,
+    "drop_t": 30
+   },
+   "pair": 1,
+   "system_order": [
+    "HPA",
+    "KubePilot"
+   ]
+  },
+  {
+   "profile": {
+    "name": "reduction_recovery",
+    "dur": 360,
+    "schedule": [
+     [
+      0,
+      97,
+      8
+     ],
+     [
+      97,
+      212,
+      1
+     ],
+     [
+      212,
+      360,
+      8
+     ]
+    ],
+    "onset": null,
+    "drop_t": 0
+   },
+   "pair": 2,
+   "system_order": [
+    "KubePilot",
+    "HPA"
+   ]
+  },
+  {
+   "profile": {
+    "name": "sustained_high",
+    "dur": 240,
+    "schedule": [
+     [
+      0,
+      240,
+      8
+     ]
+    ],
+    "onset": null,
+    "drop_t": null
+   },
+   "pair": 1,
+   "system_order": [
+    "HPA",
+    "KubePilot"
+   ]
+  },
+  {
+   "profile": {
+    "name": "reduction_recovery",
+    "dur": 360,
+    "schedule": [
+     [
+      0,
+      86,
+      6
+     ],
+     [
+      86,
+      219,
+      1
+     ],
+     [
+      219,
+      360,
+      6
+     ]
+    ],
+    "onset": null,
+    "drop_t": 0
+   },
+   "pair": 1,
+   "system_order": [
+    "KubePilot",
+    "HPA"
+   ]
+  },
+  {
+   "profile": {
+    "name": "moderate",
+    "dur": 240,
+    "schedule": [
+     [
+      0,
+      240,
+      3
+     ]
+    ],
+    "onset": null,
+    "drop_t": null
+   },
+   "pair": 1,
+   "system_order": [
+    "KubePilot",
+    "HPA"
+   ]
+  },
+  {
+   "profile": {
+    "name": "spike",
+    "dur": 240,
+    "schedule": [
+     [
+      0,
+      23,
+      1
+     ],
+     [
+      23,
+      240,
+      6
+     ]
+    ],
+    "onset": 23,
+    "drop_t": null
+   },
+   "pair": 1,
+   "system_order": [
+    "KubePilot",
+    "HPA"
+   ]
+  },
+  {
+   "profile": {
+    "name": "low",
+    "dur": 240,
+    "schedule": [
+     [
+      0,
+      240,
+      1
+     ]
+    ],
+    "onset": null,
+    "drop_t": null
+   },
+   "pair": 2,
+   "system_order": [
+    "HPA",
+    "KubePilot"
+   ]
+  }
+ ]
+}

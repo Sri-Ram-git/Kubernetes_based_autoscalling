@@ -437,16 +437,18 @@ class SimulatedTelemetryProvider:
         )
 
 
-def build_metric_queries(namespace: str, deployment: str) -> Dict[str, str]:
+def build_metric_queries(namespace: str, deployment: str, pod_cpu_request_cores: float = 0.1) -> Dict[str, str]:
     """
     Generates standard PromQL queries targeted at the application workload.
-    Supports:
-    1. Kubernetes cAdvisor container infrastructure metrics (CPU quota/usage, Memory working set/limits).
-    2. Fallback to process/application-level Prometheus instrumentation via PromQL 'or'.
+    Calculates CPU utilization relative to CPU Requests (matching Kubernetes HPA semantics:
+    75% of request = 75m).
+    Supports fallback to container limits, quota, and application-level instrumentation.
     """
     return {
         "cpu_utilization_percent": (
             f'(sum(rate(container_cpu_usage_seconds_total{{namespace="{namespace}", pod=~"{deployment}-.*"}}[1m])) / '
+            f'(count(count by (pod) (container_cpu_usage_seconds_total{{namespace="{namespace}", pod=~"{deployment}-.*"}})) * {pod_cpu_request_cores}) * 100) '
+            f'or (sum(rate(container_cpu_usage_seconds_total{{namespace="{namespace}", pod=~"{deployment}-.*"}}[1m])) / '
             f'(sum(container_spec_cpu_quota{{namespace="{namespace}", pod=~"{deployment}-.*"}}) / avg(container_spec_cpu_period{{namespace="{namespace}", pod=~"{deployment}-.*"}})) * 100) '
             f'or (sum(rate(container_cpu_usage_seconds_total{{namespace="{namespace}", pod=~"{deployment}-.*"}}[1m])) * 100) '
             f'or sum(sample_app_cpu_utilization_percent{{namespace="{namespace}"}}) '
